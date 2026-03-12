@@ -350,6 +350,33 @@ class InterviewSession:
             #         log_level="info"
             #     )
 
+    def present_as_options(self, role: str, content: list[str] = [],
+                                    message_type: str = MessageType.OPTION,
+                                    metadata: dict = {}):
+        """Present message as options"""
+
+        # Reject messages if session is not in progress
+        if not self.session_in_progress:
+            return
+
+        options = []
+        prefix = str(uuid.uuid4())
+
+        for i, c in enumerate(content):
+            message = Message(
+                id=f"{prefix}|{i}",
+                type=message_type,
+                role=role,
+                content=c,
+                timestamp=datetime.now(),
+                metadata=metadata,
+            )
+            options.append(message)
+            SessionLogger.log_to_file(
+                "option", f"{role}: {message.content}")
+            # Notify participants
+            asyncio.create_task(self._notify_participants(message))
+
     def add_message_to_chat_history(self, role: str, content: str = "", 
                                     message_type: str = MessageType.CONVERSATION,
                                     metadata: dict = {}):

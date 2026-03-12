@@ -139,6 +139,15 @@
             background: #f3f3f3;
             cursor: not-allowed;
         }
+
+        /* ── NEW: pending-like hint on the input ── */
+        #chat-input.awaiting-like {
+            border-color: #ff9800;
+            background: #fff8f0;
+        }
+        #chat-input.awaiting-like::placeholder {
+            color: #e65100;
+        }
     </style>
 </head>
 <body>
@@ -180,8 +189,8 @@
         // ===================================================================
         // STATE VARIABLES
         // ===================================================================
-        let sessionToken = null;  // REMOVED localStorage
-        let sessionStartTime = null;  // REMOVED localStorage
+        let sessionToken = null;
+        let sessionStartTime = null;
         let isRecording = false;
         let mediaRecorder = null;
         let audioChunks = [];
@@ -189,8 +198,12 @@
         let currentAudio = null;
         let ttsEnabled = true;
         let isSessionCompleted = false;
-        let pollingInterval = null;  // NEW: Track polling interval
-        let isInitializing = false;  // NEW: Prevent duplicate initialization
+        let pollingInterval = null;
+        let isInitializing = false;
+
+        // ── NEW: tracks how many bot messages currently have an unclicked like button
+        let pendingLikeCount = 0;
+
         const MIN_SESSION_DURATION_MS = 45 * 60 * 1000;
 
         // ===================================================================
@@ -205,18 +218,45 @@
             chatBox.scrollTop = chatBox.scrollHeight;
         }
 
-        function disableChatInputs() {
-            const input = document.getElementById('chat-input');
-            const sendBtn = document.querySelector('#chat-form button[type="submit"]');
-            const micBtn = document.getElementById('record-toggle');
+        // ── NEW: central helpers that honour both session-ended AND pending-like states
+        function setChatInputsLocked(locked, reason) {
+            // Only called for the pending-like lock; session-ended is handled by disableChatInputs()
+            if (isSessionCompleted) return; // session end takes precedence
 
-            input.disabled = true;
-            input.placeholder = "Session has ended";
-            sendBtn.disabled = true;
-            micBtn.disabled = true;
+            const input   = document.getElementById('chat-input');
+            const sendBtn = document.querySelector('#chat-form button[type="submit"]');
+            const micBtn  = document.getElementById('record-toggle');
+
+            input.disabled   = locked;
+            sendBtn.disabled = locked;
+            micBtn.disabled  = locked;
+
+            if (locked) {
+                input.classList.add('awaiting-like');
+                input.placeholder = reason || '👍 Click "Like" on a response above before continuing…';
+            } else {
+                input.classList.remove('awaiting-like');
+                input.placeholder = 'Type your message...';
+            }
+        }
+
+        function refreshLikeLock() {
+            setChatInputsLocked(pendingLikeCount > 0);
+        }
+
+        function disableChatInputs() {
+            const input   = document.getElementById('chat-input');
+            const sendBtn = document.querySelector('#chat-form button[type="submit"]');
+            const micBtn  = document.getElementById('record-toggle');
+
+            input.disabled        = true;
+            input.placeholder     = "Session has ended";
+            sendBtn.disabled      = true;
+            micBtn.disabled       = true;
+            input.classList.remove('awaiting-like');
 
             document.querySelector('.chat-container').classList.add('session-ended');
-            document.getElementById('chat-form').onsubmit = function (e) {
+            document.getElementById('chat-form').onsubmit = function(e) {
                 e.preventDefault();
                 return false;
             };
@@ -226,23 +266,64 @@
             if (messageId && seenMessageIds.has(messageId)) {
                 return false;
             }
-            
             if (messageId) {
                 seenMessageIds.add(messageId);
             }
 
             const chatBox = document.getElementById('chat-box');
-            const isUser = role === 'user' || role === 'User';
-            const className = isUser ? 'user' : 'bot';
-            const imgUrl = isUser 
+            const className = role;
+            const imgUrl = (role === 'user' || role === 'User')
                 ? "https://e7.pngegg.com/pngimages/178/595/png-clipart-user-profile-computer-icons-login-user-avatars-monochrome-black-thumbnail.png"
                 : "https://uploads-ssl.webflow.com/64e02bd14ada8a57fa327cbe/64e445ced8cf185ffb9bb1b9_Rex%20Small_.png";
-            
-            chatBox.innerHTML += `
-                <div class="message ${className}" data-msg-id="${messageId || ''}">
+
+            if (className === 'user') {
+                chatBox.innerHTML += `
+                    <div class="message ${className}" data-msg-id="${messageId || ''}">
                     <img src="${imgUrl}" alt="${role}">
                     <p>${text.replace(/\n/g, '<br>')}</p>
-                </div>`;
+                    </div>`;
+            } else {
+                const msgDiv = document.createElement('div');
+                msgDiv.className = `message ${className}`;
+                msgDiv.dataset.msgId = messageId || '';
+                msgDiv.innerHTML = `
+                    <img src="${imgUrl}" alt="${role}">
+                    <p>${text.replace(/\n/g, '<br>')}</p>
+                    <button class="like-btn" type="button">👍 Like</button>`;
+
+                // ── NEW: increment lock counter when the like button is attached
+                pendingLikeCount++;
+                refreshLikeLock();
+
+                const likeBtn = msgDiv.querySelector('.like-btn');
+                likeBtn.addEventListener('click', () => {
+                    const prefix = messageId.substring(0, messageId.lastIndexOf('|'));
+
+                    const allOptions = [];
+                    // Remove sibling variants (each removed sibling also had a pending like)
+                    document.querySelectorAll('#chat-box .message[data-msg-id]').forEach(el => {
+                        const elId = el.dataset.msgId;
+                        if (elId.startsWith(prefix)) {
+                            allOptions += elId;
+                        }
+                        if (elId !== messageId && elId.startsWith(prefix)) {
+                            // That sibling's like button was also pending — account for it
+                            if (el.querySelector('.like-btn')) {
+                                pendingLikeCount--;
+                            }
+                            el.remove();
+                        }
+                    });
+
+                    // ── NEW: decrement for the button the user actually clicked
+                    pendingLikeCount--;
+                    likeBtn.remove();
+                    refreshLikeLock();
+                });
+
+                chatBox.appendChild(msgDiv);
+            }
+
             scrollToBottom();
             return true;
         }
@@ -270,27 +351,22 @@
                         await new Promise(resolve => setTimeout(resolve, 1000));
                         continue;
                     }
-
                     if (!response.ok) {
                         console.warn(`TTS fetch failed: ${response.status}`);
                         return;
                     }
 
-                    const blob = await response.blob();
+                    const blob     = await response.blob();
                     const audioUrl = URL.createObjectURL(blob);
-                    
                     stopCurrentAudio();
-                    
+
                     currentAudio = new Audio(audioUrl);
                     currentAudio.onended = () => {
                         URL.revokeObjectURL(audioUrl);
                         currentAudio = null;
                         updateStatus('');
                     };
-                    currentAudio.onplay = () => {
-                        updateStatus('🔊 Playing response...');
-                    };
-                    
+                    currentAudio.onplay = () => updateStatus('🔊 Playing response...');
                     await currentAudio.play();
                     return;
                 } catch (error) {
@@ -300,43 +376,33 @@
         }
 
         // ===================================================================
-        // SESSION INITIALIZATION - FIXED!
+        // SESSION INITIALIZATION
         // ===================================================================
         async function initializeSession() {
-            // Prevent duplicate initialization
             if (isInitializing || sessionToken) {
                 console.log('Session already initializing or exists');
                 return;
             }
-
             isInitializing = true;
-            
+
             try {
                 updateStatus('Initializing session...');
-                
                 const response = await fetch('/api/start-session', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' }
                 });
-                
                 const data = await response.json();
-                
+
                 if (data.success) {
-                    sessionToken = data.session_token;
+                    sessionToken    = data.session_token;
                     sessionStartTime = Date.now();
-                    
                     console.log('Session initialized:', sessionToken);
                     updateStatus('Session started. Ready to chat!');
-                    
-                    // Start polling ONCE
+
                     if (!pollingInterval) {
                         pollingInterval = setInterval(pollForMessages, 1500);
                     }
-                    
-                    // Start button update timer
                     setInterval(updateEndSessionButton, 1000);
-                    
-                    // Do initial poll
                     pollForMessages();
                 } else {
                     updateStatus('Failed to start session: ' + (data.error || 'Unknown error'));
@@ -355,10 +421,10 @@
         // ===================================================================
         async function pollForMessages() {
             if (!sessionToken) return;
-            
+
             try {
                 const response = await fetch(`/api/get-messages?session_token=${sessionToken}`);
-                
+
                 if (response.status === 400) {
                     const err = await response.json();
                     console.warn('Session invalid:', err);
@@ -369,16 +435,16 @@
                 }
 
                 const data = await response.json();
-                
+
                 if (data.success && data.messages && data.messages.length > 0) {
                     data.messages.forEach(msg => {
                         if (msg.role === 'Interviewer' || msg.role === 'assistant') {
                             const wasNew = appendMessage('bot', msg.content, msg.id);
-                            if (wasNew && msg.id) {
-                                playMessageAudio(msg.id);
-                            }
+                            if (wasNew && msg.id) playMessageAudio(msg.id);
                         } else if (msg.role === 'User' || msg.role === 'user') {
                             appendMessage('user', msg.content, msg.id);
+                        } else if (msg.role === 'Option' || msg.role === 'option') {
+                            appendMessage('option', msg.content, msg.id);
                         }
                     });
                 }
@@ -388,8 +454,6 @@
                     isSessionCompleted = true;
                     updateEndSessionButton();
                     disableChatInputs();
-                    
-                    // Stop polling
                     if (pollingInterval) {
                         clearInterval(pollingInterval);
                         pollingInterval = null;
@@ -408,27 +472,26 @@
             if (!btn) return;
 
             if (isSessionCompleted) {
-                btn.disabled = true;
-                btn.title = "Session has ended";
-                btn.style.opacity = "0.5";
-                btn.style.cursor = "not-allowed";
+                btn.disabled          = true;
+                btn.title             = "Session has ended";
+                btn.style.opacity     = "0.5";
+                btn.style.cursor      = "not-allowed";
                 return;
             }
 
             if (sessionStartTime) {
                 const elapsed = Date.now() - sessionStartTime;
-                
                 if (elapsed < MIN_SESSION_DURATION_MS) {
-                    btn.disabled = true;
-                    const remaining = Math.ceil((MIN_SESSION_DURATION_MS - elapsed) / 60000);
-                    btn.title = `Session must be at least 45 minutes long (${remaining}m remaining)`;
+                    btn.disabled      = true;
+                    const remaining   = Math.ceil((MIN_SESSION_DURATION_MS - elapsed) / 60000);
+                    btn.title         = `Session must be at least 45 minutes long (${remaining}m remaining)`;
                     btn.style.opacity = "0.5";
-                    btn.style.cursor = "not-allowed";
+                    btn.style.cursor  = "not-allowed";
                 } else {
-                    btn.disabled = false;
-                    btn.title = "End Session";
+                    btn.disabled      = false;
+                    btn.title         = "End Session";
                     btn.style.opacity = "1";
-                    btn.style.cursor = "pointer";
+                    btn.style.cursor  = "pointer";
                 }
             }
         }
@@ -437,14 +500,10 @@
         // VOICE RECORDING
         // ===================================================================
         function startRecording(stream) {
-            mediaRecorder = new MediaRecorder(stream);
-            audioChunks = [];
-            
-            mediaRecorder.ondataavailable = function(event) {
-                audioChunks.push(event.data);
-            };
-            
-            mediaRecorder.onstop = sendAudioToServer;
+            mediaRecorder  = new MediaRecorder(stream);
+            audioChunks    = [];
+            mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+            mediaRecorder.onstop          = sendAudioToServer;
             mediaRecorder.start();
             updateStatus('🎤 Recording...');
         }
@@ -455,24 +514,19 @@
                 updateStatus('Session not initialized');
                 return;
             }
-
             updateStatus('Processing your speech...');
 
             const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-            const formData = new FormData();
+            const formData  = new FormData();
             formData.append('audio', audioBlob);
             formData.append('session_token', sessionToken);
 
             try {
-                const response = await fetch('/api/send-voice', { 
-                    method: 'POST', 
-                    body: formData 
-                });
-                const data = await response.json();
-                
+                const response = await fetch('/api/send-voice', { method: 'POST', body: formData });
+                const data     = await response.json();
+
                 if (data.success) {
-                    const tempId = 'user-' + Date.now();
-                    appendMessage('user', data.transcribed_text, tempId);
+                    appendMessage('user', data.transcribed_text, 'user-' + Date.now());
                     updateStatus('Waiting for response...');
                 } else {
                     console.error('send-voice failed', data);
@@ -489,18 +543,20 @@
                 updateStatus('Session has ended. Recording disabled.');
                 return;
             }
+            // ── NEW: also block recording while a like is pending
+            if (pendingLikeCount > 0) {
+                updateStatus('👍 Please click "Like" on a response before recording.');
+                setTimeout(() => updateStatus(''), 2500);
+                return;
+            }
 
             const recordButton = document.getElementById('record-toggle');
-            
             if (isRecording) {
-                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-                    mediaRecorder.stop();
-                }
+                if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
                 recordButton.classList.remove('recording');
                 recordButton.title = "Start Recording";
             } else {
                 stopCurrentAudio();
-                
                 navigator.mediaDevices.getUserMedia({ audio: true })
                     .then(stream => {
                         startRecording(stream);
@@ -512,7 +568,6 @@
                         updateStatus('Error: Could not access microphone');
                     });
             }
-            
             isRecording = !isRecording;
         }
 
@@ -526,41 +581,35 @@
                 updateStatus('Session has ended. You can no longer send messages.');
                 return;
             }
-            
+            // ── NEW: block submission while a like is still pending
+            if (pendingLikeCount > 0) {
+                updateStatus('👍 Please click "Like" on a response before continuing.');
+                setTimeout(() => updateStatus(''), 2500);
+                return;
+            }
             if (!sessionToken) {
                 updateStatus('Session not initialized yet. Please wait.');
                 return;
             }
 
             const input = document.getElementById('chat-input');
-            const text = input.value.trim();
-            
+            const text  = input.value.trim();
             if (!text) return;
-            
+
             input.value = '';
             stopCurrentAudio();
-
-            const tempMsgId = 'user-' + Date.now();
-            appendMessage('user', text, tempMsgId);
+            appendMessage('user', text, 'user-' + Date.now());
 
             try {
                 const response = await fetch('/api/send-message', {
-                    method: 'POST',
+                    method:  'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        session_token: sessionToken,
-                        message: text,
-                        type: "CONVERSATION"
-                    }),
+                    body:    JSON.stringify({ session_token: sessionToken, role: 'user', message: text, type: "CONVERSATION" }),
                 });
-
                 const result = await response.json();
-                
                 if (!result.success) {
                     console.error('Message send failed:', result);
-                    if (result.session_completed) {
-                        updateStatus('Session has ended');
-                    }
+                    if (result.session_completed) updateStatus('Session has ended');
                 }
             } catch (error) {
                 console.error('Error sending message:', error);
@@ -579,9 +628,7 @@
 
         document.getElementById('tts-toggle').addEventListener('change', function(event) {
             ttsEnabled = event.target.checked;
-            if (!ttsEnabled) {
-                stopCurrentAudio();
-            }
+            if (!ttsEnabled) stopCurrentAudio();
             updateStatus(ttsEnabled ? 'Voice responses enabled' : 'Voice responses disabled');
             setTimeout(() => updateStatus(''), 2000);
         });
@@ -589,39 +636,24 @@
         document.getElementById('record-toggle').onclick = toggleRecording;
 
         document.getElementById('end-session-btn').onclick = async function() {
-            if (!confirm('Are you sure you want to end this session? Your interview will be completed.')) {
-                return;
-            }
-
-            if (!sessionToken) {
-                updateStatus('No active session to end');
-                return;
-            }
+            if (!confirm('Are you sure you want to end this session? Your interview will be completed.')) return;
+            if (!sessionToken) { updateStatus('No active session to end'); return; }
 
             try {
                 updateStatus('Ending session...');
                 stopCurrentAudio();
-
                 const response = await fetch('/api/end-session', {
-                    method: 'POST',
+                    method:  'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        session_token: sessionToken
-                    })
+                    body:    JSON.stringify({ session_token: sessionToken })
                 });
-
                 const result = await response.json();
-                
                 if (result.success) {
                     updateStatus('Session ended. Thank you for participating!');
                     isSessionCompleted = true;
                     updateEndSessionButton();
                     disableChatInputs();
-                    
-                    if (pollingInterval) {
-                        clearInterval(pollingInterval);
-                        pollingInterval = null;
-                    }
+                    if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
                 } else {
                     updateStatus('Failed to end session: ' + (result.error || 'Unknown error'));
                 }
@@ -632,7 +664,7 @@
         };
 
         // ===================================================================
-        // INITIALIZATION - ONLY CALLED ONCE!
+        // INITIALIZATION
         // ===================================================================
         document.addEventListener('DOMContentLoaded', function() {
             console.log('Page loaded, initializing session...');

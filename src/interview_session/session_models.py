@@ -11,6 +11,7 @@ class MessageType(str, Enum):
     FEEDBACK = "feedback" # for detailed feedback
     LIKE = "like"         # for like action
     SKIP = "skip"         # for skip action
+    OPTION = "option"     # for option
 
 class Message(BaseModel):
     id: str

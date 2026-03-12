@@ -86,6 +86,11 @@ a:hover {
 }
 
 .bot p {
+    background-color: #fff0bf;
+    color: #333;
+}
+
+.option p {
     background-color: #f1f1f1;
     color: #333;
 }

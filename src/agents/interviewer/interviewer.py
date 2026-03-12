@@ -9,7 +9,7 @@ from src.agents.interviewer.prompts import get_prompt
 from src.agents.interviewer.tools import EndConversation, RespondToUser
 from src.agents.shared.memory_tools import Recall
 from src.utils.llm.prompt_utils import format_prompt
-from src.interview_session.session_models import Participant, Message
+from src.interview_session.session_models import Participant, Message, MessageType
 from src.utils.llm.xml_formatter import parse_rubric_call
 from src.utils.logger.session_logger import SessionLogger
 from src.utils.constants.colors import GREEN, RESET
@@ -72,7 +72,7 @@ class Interviewer(BaseAgent, Participant):
         }
 
         self._turn_to_respond = False
-        self._max_consideration_iterations = 1
+        self._max_consideration_iterations = 4
 
     def _handle_quantify_response(self, quantified_response: str,
                                   original_response: str) -> Tuple[str, Rubric]:
@@ -156,19 +156,22 @@ class Interviewer(BaseAgent, Participant):
         self._turn_to_respond = True
         iterations = 0
 
+        responses = []
         while self._turn_to_respond and iterations < self._max_consideration_iterations:
             prompt = self._get_prompt()
             self.add_event(sender=self.name, tag="llm_prompt", content=prompt)
             response = await self.call_engine_async(prompt)
             print(f"{GREEN}Interviewer:\n{response}{RESET}")
-            try:
-                # await self.handle_tool_calls_async(response)
-                self.interview_session.add_message_to_chat_history(
-                    role=self.title, content=response, message_type=MessageType.CONVERSATION)
-            except Exception as e:
-                print(f"Error calling tool: {e}. Use the raw response as the output.")
-                await self._handle_response(response)
-
+            # try:
+            #     # await self.handle_tool_calls_async(response)
+            #     self.interview_session.present_as_option(
+            #         role=self.title, content=response, message_type=MessageType.CONVERSATION)
+            #     # self.interview_session.add_message_to_chat_history(
+            #         # role=self.title, content=response, message_type=MessageType.CONVERSATION)
+            # except Exception as e:
+            #     print(f"Error calling tool: {e}. Use the raw response as the output.")
+            #     await self._handle_response(response)
+            responses.append(response)
             iterations += 1
             if iterations >= self._max_consideration_iterations:
                 self.add_event(
@@ -177,6 +180,12 @@ class Interviewer(BaseAgent, Participant):
                     content=f"Exceeded maximum number of consideration "
                     f"iterations ({self._max_consideration_iterations})"
                 )
+        try:
+            self.interview_session.present_as_options(
+                role=self.title, content=responses, message_type=MessageType.CONVERSATION)
+        except Exception as e:
+            print(f"Error calling tool: {e}. Use the raw response as the output.")
+            await self._handle_response(response)
 
     def _get_prompt(self):
         '''Gets the prompt for the interviewer. '''
