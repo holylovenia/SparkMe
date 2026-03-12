@@ -8,7 +8,9 @@ from src.content.question_bank.question import Question, InterviewQuestion, Rubr
 from src.content.session_agenda.interview_topic_manager import InterviewTopicManager
 from src.utils.logger.session_logger import SessionLogger
 from src.utils.data_process import safe_parse_json
+from dotenv import load_dotenv
 
+load_dotenv()
 
 LOGS_DIR = os.getenv("LOGS_DIR")
 

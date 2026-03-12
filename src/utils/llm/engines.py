@@ -9,6 +9,8 @@ from src.utils.llm.models.gemini import GeminiVertexEngine, gemini_models
 from src.utils.llm.models.deepseek import DeepSeekEngine, deepseek_models
 from src.utils.llm.models.vllm import VLLMEngine
 
+from src.utils.llm.models.lipsum import LipsumEngine
+
 
 
 engine_constructor = {
@@ -18,7 +20,7 @@ engine_constructor = {
     "gpt-3.5-turbo-0125": ChatOpenAI,
     "gpt-4o": ChatOpenAI,
     "meta-llama/Llama-3.1-8B-Instruct": ChatTogether,
-    "meta-llama/Llama-3.1-70B-Instruct": ChatTogether
+    "meta-llama/Llama-3.1-70B-Instruct": ChatTogether,
 }
 
 def get_engine(model_name, **kwargs):
@@ -82,6 +84,13 @@ def get_engine(model_name, **kwargs):
         actual_model_name = model_name[5:]  # Remove "vllm:" prefix
         kwargs["max_tokens"] = token_limit
         return VLLMEngine(model_name=actual_model_name, **kwargs)
+
+    # Handle Lipsum random generators (identified by lipsum: prefix)
+    if model_name.startswith("lipsum:"):
+        # Extract the actual model name after the vllm: prefix
+        actual_model_name = model_name[5:]  # Remove "vllm:" prefix
+        kwargs["max_tokens"] = token_limit
+        return LipsumEngine(model_name=actual_model_name, **kwargs)
 
     # For other models (OpenAI, Llama), use max_tokens
     kwargs["max_tokens"] = token_limit

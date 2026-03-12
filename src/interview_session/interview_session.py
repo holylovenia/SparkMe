@@ -29,7 +29,8 @@ from src.content.question_bank.question_bank_vector_db import QuestionBankVector
 from src.interview_session.prompts.conversation_summarize import summarize_conversation
 from src.utils.token_tracker import TokenUsageTracker
 
-
+from dotenv import load_dotenv
+load_dotenv()
 
 
 class UserConfig(TypedDict, total=False):
@@ -204,32 +205,33 @@ class InterviewSession:
             interview_session=self
         )
         
-        # StrategicPlanner config
-        # TODO: Tune strategic planner parameters
-        planner_config = StrategicPlannerConfig(
-                user_id=self.user_id,
-                turn_trigger=int(os.getenv("STRATEGIC_PLANNER_TURN_TRIGGER", "3")),
-                num_rollouts=int(os.getenv("STRATEGIC_PLANNER_NUM_ROLLOUTS", "3")),
-                rollout_horizon=int(os.getenv("STRATEGIC_PLANNER_ROLLOUT_HORIZON", "3")),
-                max_strategic_questions=int(os.getenv("STRATEGIC_PLANNER_MAX_QUESTIONS", "5")),
-                alpha=float(os.getenv("STRATEGIC_PLANNER_ALPHA", "0.5")),  # Coverage weight
-                beta=float(os.getenv("STRATEGIC_PLANNER_BETA", "0.3")),   # Cost penalty
-                gamma=float(os.getenv("STRATEGIC_PLANNER_GAMMA", "0.2"))   # Emergence reward
-        )
+        self.strategic_planner = None
+        # # StrategicPlanner config
+        # # TODO: Tune strategic planner parameters
+        # planner_config = StrategicPlannerConfig(
+        #         user_id=self.user_id,
+        #         turn_trigger=int(os.getenv("STRATEGIC_PLANNER_TURN_TRIGGER", "3")),
+        #         num_rollouts=int(os.getenv("STRATEGIC_PLANNER_NUM_ROLLOUTS", "3")),
+        #         rollout_horizon=int(os.getenv("STRATEGIC_PLANNER_ROLLOUT_HORIZON", "3")),
+        #         max_strategic_questions=int(os.getenv("STRATEGIC_PLANNER_MAX_QUESTIONS", "5")),
+        #         alpha=float(os.getenv("STRATEGIC_PLANNER_ALPHA", "0.5")),  # Coverage weight
+        #         beta=float(os.getenv("STRATEGIC_PLANNER_BETA", "0.3")),   # Cost penalty
+        #         gamma=float(os.getenv("STRATEGIC_PLANNER_GAMMA", "0.2"))   # Emergence reward
+        # )
         
-        # Use dedicated planner model if configured
-        planner_model = os.getenv("STRATEGIC_PLANNER_MODEL_NAME")
-        if planner_model:
-            planner_config["model_name"] = planner_model
-            # Pass base_url if configured (for vLLM)
-            planner_base_url = os.getenv("STRATEGIC_PLANNER_VLLM_BASE_URL")
-            if planner_base_url:
-                planner_config["base_url"] = planner_base_url
+        # # Use dedicated planner model if configured
+        # planner_model = os.getenv("STRATEGIC_PLANNER_MODEL_NAME")
+        # if planner_model:
+        #     planner_config["model_name"] = planner_model
+        #     # Pass base_url if configured (for vLLM)
+        #     planner_base_url = os.getenv("STRATEGIC_PLANNER_VLLM_BASE_URL")
+        #     if planner_base_url:
+        #         planner_config["base_url"] = planner_base_url
         
-        self.strategic_planner: StrategicPlanner = StrategicPlanner(
-            config=planner_config,
-            interview_session=self
-        )
+        # self.strategic_planner: StrategicPlanner = StrategicPlanner(
+        #     config=planner_config,
+        #     interview_session=self
+        # )
         self.report_orchestrator = ReportOrchestrator(
             config=ReportConfig(
                 user_id=self.user_id,
@@ -244,7 +246,8 @@ class InterviewSession:
             # Subscribers of Interviewer: Note-taker and User (in following code)
             "Interviewer": [self.session_scribe],
             # Subscribers of User: Interviewer, SessionScribe, and StrategicPlanner
-            "User": [self._interviewer, self.session_scribe, self.strategic_planner]
+            # "User": [self._interviewer, self.session_scribe, self.strategic_planner]
+            "User": [self._interviewer, self.session_scribe]
         }
 
         # User participant for terminal interaction
@@ -332,20 +335,20 @@ class InterviewSession:
                     f"[TOKEN_TRACKING] Saved final token usage summary to {final_summary_path}",
                     log_level="info"
                 )
-            elif self.session_agenda.all_core_topics_completed():
-                SessionLogger.log_to_file(
-                    "execution_log",
-                    f"[TOPICS] All topics for this session have been completed. "
-                    f"Ending session."
-                )
-                self.session_in_progress = False
-                # Save final token usage summary
-                final_summary_path = self.token_tracker.save_final_summary()
-                SessionLogger.log_to_file(
-                    "execution_log",
-                    f"[TOKEN_TRACKING] Saved final token usage summary to {final_summary_path}",
-                    log_level="info"
-                )
+            # elif self.session_agenda.all_core_topics_completed():
+            #     SessionLogger.log_to_file(
+            #         "execution_log",
+            #         f"[TOPICS] All topics for this session have been completed. "
+            #         f"Ending session."
+            #     )
+            #     self.session_in_progress = False
+            #     # Save final token usage summary
+            #     final_summary_path = self.token_tracker.save_final_summary()
+            #     SessionLogger.log_to_file(
+            #         "execution_log",
+            #         f"[TOKEN_TRACKING] Saved final token usage summary to {final_summary_path}",
+            #         log_level="info"
+            #     )
 
     def add_message_to_chat_history(self, role: str, content: str = "", 
                                     message_type: str = MessageType.CONVERSATION,
@@ -442,56 +445,56 @@ class InterviewSession:
                 "execution_log", f"[RUN] Unexpected error: {str(e)}")
             raise e
 
-        # Post-interview Processing
-        finally:
-            try:
-                self.session_in_progress = False
+        # # Post-interview Processing
+        # finally:
+        #     try:
+        #         self.session_in_progress = False
 
-                # Update report (API mode handles this separately)
-                if self.interaction_mode != 'api' or self._session_timeout:
-                    with contextlib.suppress(KeyboardInterrupt):
-                        SessionLogger.log_to_file(
-                            "execution_log", 
-                            (
-                                f"[REPORT] Trigger final report update. "
-                                f"Waiting for session scribe to finish processing..."
-                            )
-                        )
-                        await self.final_update_report_and_agenda(
-                            selected_topics=[])
+        #         # Update report (API mode handles this separately)
+        #         if self.interaction_mode != 'api' or self._session_timeout:
+        #             with contextlib.suppress(KeyboardInterrupt):
+        #                 SessionLogger.log_to_file(
+        #                     "execution_log", 
+        #                     (
+        #                         f"[REPORT] Trigger final report update. "
+        #                         f"Waiting for session scribe to finish processing..."
+        #                     )
+        #                 )
+        #                 await self.final_update_report_and_agenda(
+        #                     selected_topics=[])
 
-                # Wait for report update to complete if it's in progress
-                start_time = time.time()
-                while (self.report_orchestrator.report_update_in_progress or 
-                       self.report_orchestrator.session_agenda_update_in_progress):
-                    await asyncio.sleep(0.1)
-                    if time.time() - start_time > 600:  # 10 minutes timeout
-                        SessionLogger.log_to_file(
-                            "execution_log", 
-                            (
-                                f"[REPORT] Timeout waiting for report update"
-                            )
-                        )
-                        break
+        #         # Wait for report update to complete if it's in progress
+        #         start_time = time.time()
+        #         while (self.report_orchestrator.report_update_in_progress or 
+        #                self.report_orchestrator.session_agenda_update_in_progress):
+        #             await asyncio.sleep(0.1)
+        #             if time.time() - start_time > 600:  # 10 minutes timeout
+        #                 SessionLogger.log_to_file(
+        #                     "execution_log", 
+        #                     (
+        #                         f"[REPORT] Timeout waiting for report update"
+        #                     )
+        #                 )
+        #                 break
 
-            except Exception as e:
-                SessionLogger.log_to_file(
-                    "execution_log", f"[RUN] Error during report update: \
-                          {str(e)}")
-            finally:
-                # Save memory bank
-                self.memory_bank.save_to_file(self.user_id)
-                SessionLogger.log_to_file(
-                    "execution_log", f"[COMPLETED] Memory bank saved")
+        #     except Exception as e:
+        #         SessionLogger.log_to_file(
+        #             "execution_log", f"[RUN] Error during report update: \
+        #                   {str(e)}")
+        #     finally:
+        #         # Save memory bank
+        #         self.memory_bank.save_to_file(self.user_id)
+        #         SessionLogger.log_to_file(
+        #             "execution_log", f"[COMPLETED] Memory bank saved")
                 
-                # Save historical question bank
-                self.historical_question_bank.save_to_file(self.user_id)
-                SessionLogger.log_to_file(
-                    "execution_log", f"[COMPLETED] Question bank saved")
+        #         # Save historical question bank
+        #         self.historical_question_bank.save_to_file(self.user_id)
+        #         SessionLogger.log_to_file(
+        #             "execution_log", f"[COMPLETED] Question bank saved")
                        
-                self.session_completed = True
-                SessionLogger.log_to_file(
-                    "execution_log", f"[COMPLETED] Session completed")
+        #         self.session_completed = True
+        #         SessionLogger.log_to_file(
+        #             "execution_log", f"[COMPLETED] Session completed")
 
     async def get_session_memories(self, include_processed=True) -> List[Memory]:
         """Get memories added during this session

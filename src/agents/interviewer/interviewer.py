@@ -72,6 +72,7 @@ class Interviewer(BaseAgent, Participant):
         }
 
         self._turn_to_respond = False
+        self._max_consideration_iterations = 1
 
     def _handle_quantify_response(self, quantified_response: str,
                                   original_response: str) -> Tuple[str, Rubric]:
@@ -161,7 +162,9 @@ class Interviewer(BaseAgent, Participant):
             response = await self.call_engine_async(prompt)
             print(f"{GREEN}Interviewer:\n{response}{RESET}")
             try:
-                await self.handle_tool_calls_async(response)
+                # await self.handle_tool_calls_async(response)
+                self.interview_session.add_message_to_chat_history(
+                    role=self.title, content=response, message_type=MessageType.CONVERSATION)
             except Exception as e:
                 print(f"Error calling tool: {e}. Use the raw response as the output.")
                 await self._handle_response(response)
@@ -237,11 +240,11 @@ class Interviewer(BaseAgent, Participant):
                 )
             format_params["questions_and_notes"] = questions_and_notes_str
 
-            # Get strategic question suggestions from StrategicPlanner (only if not stale)
-            # Staleness is checked before formatting to avoid unnecessary work
-            if self._should_include_strategic_questions():
-                strategic_questions_str = self._format_strategic_questions()
-                format_params["strategic_questions"] = strategic_questions_str
+            # # Get strategic question suggestions from StrategicPlanner (only if not stale)
+            # # Staleness is checked before formatting to avoid unnecessary work
+            # if self._should_include_strategic_questions():
+            #     strategic_questions_str = self._format_strategic_questions()
+            #     format_params["strategic_questions"] = strategic_questions_str
 
         # Use the baseline prompt if enabled
         if len(all_interviewer_messages) == 0 and len(last_meeting_summary_str) == 0:
@@ -253,106 +256,106 @@ class Interviewer(BaseAgent, Participant):
         else:
             main_prompt = get_prompt("normal")
 
-            # Remove STRATEGIC_QUESTIONS section from template if stale
-            if not self.use_baseline and not self._should_include_strategic_questions():
-                # Remove the {STRATEGIC_QUESTIONS} line to exclude the section entirely
-                main_prompt = main_prompt.replace("\n{STRATEGIC_QUESTIONS}\n", "\n")
-                # Don't provide strategic_questions key in format_params (already omitted above)
+            # # Remove STRATEGIC_QUESTIONS section from template if stale
+            # if not self.use_baseline and not self._should_include_strategic_questions():
+            #     # Remove the {STRATEGIC_QUESTIONS} line to exclude the section entirely
+            #     main_prompt = main_prompt.replace("\n{STRATEGIC_QUESTIONS}\n", "\n")
+            #     # Don't provide strategic_questions key in format_params (already omitted above)
 
         return format_prompt(main_prompt, format_params)
 
-    def _format_strategic_questions(self) -> str:
-        """
-        Format strategic question suggestions from StrategicPlanner.
+    # def _format_strategic_questions(self) -> str:
+    #     """
+    #     Format strategic question suggestions from StrategicPlanner.
 
-        Returns formatted string with strategic questions or empty state message.
-        Handles case where suggestions may be stale (from 3-5 turns ago).
-        """
-        # Access strategic state from StrategicPlanner
-        strategic_state = self.interview_session.strategic_planner.strategic_state
-        suggestions = strategic_state.strategic_question_suggestions
+    #     Returns formatted string with strategic questions or empty state message.
+    #     Handles case where suggestions may be stale (from 3-5 turns ago).
+    #     """
+    #     # Access strategic state from StrategicPlanner
+    #     strategic_state = self.interview_session.strategic_planner.strategic_state
+    #     suggestions = strategic_state.strategic_question_suggestions
 
-        if not suggestions:
-            return "No strategic question suggestions available yet. Use coverage-based heuristics to select questions from the topics list."
+    #     if not suggestions:
+    #         return "No strategic question suggestions available yet. Use coverage-based heuristics to select questions from the topics list."
 
-        # Get top rollout if available
-        top_rollout = None
-        if strategic_state.rollout_predictions:
-            top_rollout = strategic_state.rollout_predictions[0]
+    #     # Get top rollout if available
+    #     top_rollout = None
+    #     if strategic_state.rollout_predictions:
+    #         top_rollout = strategic_state.rollout_predictions[0]
 
-        formatted_lines = []
+    #     formatted_lines = []
 
-        # Add top rollout context if available
-        if top_rollout:
-            formatted_lines.append("**Highest-Utility Conversation Path Predicted:**")
-            formatted_lines.append(f"Utility Score: {top_rollout.utility_score:.3f} (Higher is better)")
-            formatted_lines.append(f"- Expected new subtopics covered: {top_rollout.expected_coverage_delta}")
-            formatted_lines.append(f"- Emergence potential: {top_rollout.emergence_potential:.2f}")
-            formatted_lines.append(f"- Cost (turns): {top_rollout.cost_estimate}")
-            formatted_lines.append("")
-            formatted_lines.append("The questions below are optimized to align with this high-utility path.")
-            formatted_lines.append("")
+    #     # Add top rollout context if available
+    #     if top_rollout:
+    #         formatted_lines.append("**Highest-Utility Conversation Path Predicted:**")
+    #         formatted_lines.append(f"Utility Score: {top_rollout.utility_score:.3f} (Higher is better)")
+    #         formatted_lines.append(f"- Expected new subtopics covered: {top_rollout.expected_coverage_delta}")
+    #         formatted_lines.append(f"- Emergence potential: {top_rollout.emergence_potential:.2f}")
+    #         formatted_lines.append(f"- Cost (turns): {top_rollout.cost_estimate}")
+    #         formatted_lines.append("")
+    #         formatted_lines.append("The questions below are optimized to align with this high-utility path.")
+    #         formatted_lines.append("")
 
-        # Format suggestions by priority (high to low)
-        sorted_suggestions = sorted(suggestions, key=lambda x: x.get('priority', 0), reverse=True)
+    #     # Format suggestions by priority (high to low)
+    #     sorted_suggestions = sorted(suggestions, key=lambda x: x.get('priority', 0), reverse=True)
 
-        formatted_lines.append("**Strategic Question Suggestions (sorted by priority):**")
-        formatted_lines.append("")
-        for i, suggestion in enumerate(sorted_suggestions, 1):
-            formatted_lines.append(f"{i}. **{suggestion['content']}**")
-            formatted_lines.append(f"   - Target: Subtopic {suggestion['subtopic_id']}")
-            formatted_lines.append(f"   - Strategy: {suggestion['strategy_type']}")
-            formatted_lines.append(f"   - Priority: {suggestion['priority']}/10")
-            formatted_lines.append(f"   - Reasoning: {suggestion['reasoning']}")
-            formatted_lines.append("")  # Blank line between suggestions
+    #     formatted_lines.append("**Strategic Question Suggestions (sorted by priority):**")
+    #     formatted_lines.append("")
+    #     for i, suggestion in enumerate(sorted_suggestions, 1):
+    #         formatted_lines.append(f"{i}. **{suggestion['content']}**")
+    #         formatted_lines.append(f"   - Target: Subtopic {suggestion['subtopic_id']}")
+    #         formatted_lines.append(f"   - Strategy: {suggestion['strategy_type']}")
+    #         formatted_lines.append(f"   - Priority: {suggestion['priority']}/10")
+    #         formatted_lines.append(f"   - Reasoning: {suggestion['reasoning']}")
+    #         formatted_lines.append("")  # Blank line between suggestions
 
-        return "\n".join(formatted_lines)
+    #     return "\n".join(formatted_lines)
 
-    def _should_include_strategic_questions(self) -> bool:
-        """
-        Determine if strategic questions should be included in the prompt.
+    # def _should_include_strategic_questions(self) -> bool:
+    #     """
+    #     Determine if strategic questions should be included in the prompt.
 
-        Strategic questions become stale after exceeding the rollout horizon.
-        Only include them if they are fresh (within horizon + buffer).
+    #     Strategic questions become stale after exceeding the rollout horizon.
+    #     Only include them if they are fresh (within horizon + buffer).
 
-        Returns:
-            bool: True if strategic questions should be included, False if stale
-        """
-        strategic_state = self.interview_session.strategic_planner.strategic_state
+    #     Returns:
+    #         bool: True if strategic questions should be included, False if stale
+    #     """
+    #     strategic_state = self.interview_session.strategic_planner.strategic_state
 
-        # If no suggestions exist, don't include
-        if not strategic_state.strategic_question_suggestions:
-            return False
+    #     # If no suggestions exist, don't include
+    #     if not strategic_state.strategic_question_suggestions:
+    #         return False
 
-        # Calculate current turn (count User messages)
-        current_turn = len([
-            m for m in self.interview_session.chat_history
-            if m.role == "User"
-        ])
+    #     # Calculate current turn (count User messages)
+    #     current_turn = len([
+    #         m for m in self.interview_session.chat_history
+    #         if m.role == "User"
+    #     ])
 
-        # Get last planning turn from strategic state
-        last_planning_turn = strategic_state.last_planning_turn
+    #     # Get last planning turn from strategic state
+    #     last_planning_turn = strategic_state.last_planning_turn
 
-        # If planning hasn't run yet (turn 0), don't include
-        if last_planning_turn == 0:
-            return False
+    #     # If planning hasn't run yet (turn 0), don't include
+    #     if last_planning_turn == 0:
+    #         return False
 
-        # Get rollout horizon from strategic planner
-        rollout_horizon = self.interview_session.strategic_planner.rollout_horizon
+    #     # Get rollout horizon from strategic planner
+    #     rollout_horizon = self.interview_session.strategic_planner.rollout_horizon
 
-        # Calculate staleness: questions are stale if we're beyond horizon + buffer
-        # Buffer of 2 turns accounts for: 1) planning completes after trigger, 2) grace period
-        staleness_threshold = last_planning_turn + rollout_horizon + 2
+    #     # Calculate staleness: questions are stale if we're beyond horizon + buffer
+    #     # Buffer of 2 turns accounts for: 1) planning completes after trigger, 2) grace period
+    #     staleness_threshold = last_planning_turn + rollout_horizon + 2
 
-        # Include questions only if NOT stale
-        is_fresh = current_turn <= staleness_threshold
+    #     # Include questions only if NOT stale
+    #     is_fresh = current_turn <= staleness_threshold
 
-        if not is_fresh:
-            SessionLogger.log_to_file(
-                "execution_log",
-                f"[NOTIFY] (Interviewer) Strategic questions are stale "
-                f"(last_planning_turn={last_planning_turn}, current_turn={current_turn}, "
-                f"threshold={staleness_threshold}). Excluding from prompt."
-            )
+    #     if not is_fresh:
+    #         SessionLogger.log_to_file(
+    #             "execution_log",
+    #             f"[NOTIFY] (Interviewer) Strategic questions are stale "
+    #             f"(last_planning_turn={last_planning_turn}, current_turn={current_turn}, "
+    #             f"threshold={staleness_threshold}). Excluding from prompt."
+    #         )
 
-        return is_fresh
+    #     return is_fresh

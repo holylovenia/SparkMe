@@ -5,6 +5,10 @@ from typing import List, Optional
 
 import threading
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 LOGS_DIR = os.getenv("LOGS_DIR")
 
 LOG_LEVELS = {
