@@ -299,13 +299,9 @@
                 likeBtn.addEventListener('click', () => {
                     const prefix = messageId.substring(0, messageId.lastIndexOf('|'));
 
-                    const allOptions = [];
                     // Remove sibling variants (each removed sibling also had a pending like)
                     document.querySelectorAll('#chat-box .message[data-msg-id]').forEach(el => {
                         const elId = el.dataset.msgId;
-                        if (elId.startsWith(prefix)) {
-                            allOptions += elId;
-                        }
                         if (elId !== messageId && elId.startsWith(prefix)) {
                             // That sibling's like button was also pending — account for it
                             if (el.querySelector('.like-btn')) {
@@ -604,7 +600,7 @@
                 const response = await fetch('/api/send-message', {
                     method:  'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body:    JSON.stringify({ session_token: sessionToken, role: 'user', message: text, type: "CONVERSATION" }),
+                    body:    JSON.stringify({ session_token: sessionToken, message: text, type: "CONVERSATION" }),
                 });
                 const result = await response.json();
                 if (!result.success) {
