@@ -372,14 +372,18 @@ class InterviewSession:
                 metadata=metadata,
             )
             options.append(message)
+
+            # save_feedback_to_csv(
+            #     message, self._last_user_message, self.user_id, self.session_id)
+            # self.chat_history.append(message)
+            
             SessionLogger.log_to_file(
                 "option", f"{role}: {message.content}")
             # Notify participants
             asyncio.create_task(self._notify_participants(message))
 
-    def add_message_to_chat_history(self, role: str, content: str = "", 
-                                    message_type: str = MessageType.CONVERSATION,
-                                    metadata: dict = {}):
+    def add_message_to_chat_history(self, role: str, content: str = "", reply_to: str = "",
+                                    message_type: str = MessageType.CONVERSATION):
         """Add a message to the chat history"""
 
         # Reject messages if session is not in progress
@@ -392,6 +396,10 @@ class InterviewSession:
         elif message_type == MessageType.LIKE:
             content = "Like the question"
 
+        print()
+        print("====== METADATA", {"reply_to": reply_to})
+        print()
+
         # Create message object
         message = Message(
             id=str(uuid.uuid4()),
@@ -399,7 +407,7 @@ class InterviewSession:
             role=role,
             content=content,
             timestamp=datetime.now(),
-            metadata=metadata,
+            metadata={"reply_to": reply_to},
         )
 
         if role == "User":
@@ -407,16 +415,18 @@ class InterviewSession:
         elif role == "Interviewer" and self._last_user_message is not None:
             self._last_user_message = None
         
-        # Log feedback
-        if message_type != MessageType.CONVERSATION:
-            save_feedback_to_csv(
-                self.chat_history[-1], message, self.user_id, self.session_id)
+        # # Log feedback
+        # if message_type != MessageType.CONVERSATION:
+        #     save_feedback_to_csv(
+        #         self.chat_history[-1], message, self.user_id, self.session_id)
 
         # Notify participants if message is a skip or conversation
         if message_type == MessageType.SKIP or \
               message_type == MessageType.CONVERSATION:
             
             # Add message to chat history
+            save_feedback_to_csv(
+                reply_to, message, self.user_id, self.session_id)
             self.chat_history.append(message)
             SessionLogger.log_to_file(
                 "chat_history", f"{message.role}: {message.content}")

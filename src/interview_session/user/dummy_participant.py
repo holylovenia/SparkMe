@@ -52,10 +52,11 @@ class UserDummyParticipant(User):
         # # Clear pending message
         # self._pending_user_message = None
 
-    def add_user_message(self, text: str):
+    def add_user_message(self, text: str, reply_to: str):
         self.interview_session.add_message_to_chat_history(
             role="User",
-            content=text
+            content=text,
+            reply_to=reply_to,
         )
 
     def get_interviewer_message(self):

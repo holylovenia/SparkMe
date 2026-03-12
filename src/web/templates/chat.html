@@ -200,6 +200,7 @@
         let isSessionCompleted = false;
         let pollingInterval = null;
         let isInitializing = false;
+        let lastLikedMessageText = null;
 
         // ── NEW: tracks how many bot messages currently have an unclicked like button
         let pendingLikeCount = 0;
@@ -298,6 +299,9 @@
                 const likeBtn = msgDiv.querySelector('.like-btn');
                 likeBtn.addEventListener('click', () => {
                     const prefix = messageId.substring(0, messageId.lastIndexOf('|'));
+
+                    const textParagraph = msgDiv.querySelector('p');
+                    lastLikedMessageText = textParagraph ? textParagraph.innerText : null;
 
                     // Remove sibling variants (each removed sibling also had a pending like)
                     document.querySelectorAll('#chat-box .message[data-msg-id]').forEach(el => {
@@ -600,7 +604,12 @@
                 const response = await fetch('/api/send-message', {
                     method:  'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body:    JSON.stringify({ session_token: sessionToken, message: text, type: "CONVERSATION" }),
+                    body:    JSON.stringify({
+                        session_token: sessionToken,
+                        message: text,
+                        type: "CONVERSATION",
+                        reply_to: lastLikedMessageText
+                    }),
                 });
                 const result = await response.json();
                 if (!result.success) {

@@ -10,6 +10,8 @@ from src.interview_session.session_models import Message
 def save_feedback_to_csv(interviewer_message: Message, feedback_message: Message, user_id: str, session_id: str):
     """Save feedback message to a CSV file with the last conversation message"""
 
+    print('CALLED RIGHT HEREEEEEE')
+
     # Prepare the feedback directory
     feedback_dir = os.path.join(os.getenv("LOGS_DIR", "logs"), user_id, 'feedback')
     os.makedirs(feedback_dir, exist_ok=True)
@@ -22,7 +24,13 @@ def save_feedback_to_csv(interviewer_message: Message, feedback_message: Message
             writer.writerow(['timestamp', 'interviewer_message', 'user_feedback'])
 
     # Clean and prepare the messages
-    interviewer_content = interviewer_message.content if interviewer_message else ''
+    if interviewer_message:
+        if type(interviewer_message) == str:
+            interviewer_content = interviewer_message
+        else:
+            interviewer_content = interviewer_message.content
+    else:
+        interviewer_content = ''
     feedback_content = feedback_message.content if feedback_message else ''
     
     # Append the feedback

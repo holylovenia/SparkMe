@@ -375,6 +375,11 @@ def send_message():
     data = request.json
     session_token = data.get('session_token')
     user_message = data.get('message')
+    reply_to = data.get('reply_to', None)
+
+    print()
+    print("======== REPLY TO", reply_to)
+    print()
 
     session = get_session(session_token)
     if not session:
@@ -392,9 +397,9 @@ def send_message():
 
     wrapper = get_session_wrapper(session_token)
     if wrapper and hasattr(wrapper, 'loop'):
-        wrapper.loop.call_soon_threadsafe(wrapper.interview_session.user.add_user_message, user_message)
+        wrapper.loop.call_soon_threadsafe(wrapper.interview_session.user.add_user_message, user_message, reply_to)
     else:
-        session.user.add_user_message(user_message)
+        session.user.add_user_message(user_message, reply_to)
 
     bot_reply = wait_for_agent_response(session)
 
