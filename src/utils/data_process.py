@@ -10,36 +10,42 @@ from src.interview_session.session_models import Message
 def save_feedback_to_csv(interviewer_message: Message, feedback_message: Message, user_id: str, session_id: str):
     """Save feedback message to a CSV file with the last conversation message"""
 
-    print('CALLED RIGHT HEREEEEEE')
-
-    # Prepare the feedback directory
     feedback_dir = os.path.join(os.getenv("LOGS_DIR", "logs"), user_id, 'feedback')
     os.makedirs(feedback_dir, exist_ok=True)
     feedback_file = os.path.join(feedback_dir, f'session_{session_id}.csv')
 
-    # Create CSV file with headers if it doesn't exist
     if not os.path.exists(feedback_file):
         with open(feedback_file, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f, quoting=csv.QUOTE_ALL, escapechar='\\')
-            writer.writerow(['timestamp', 'interviewer_message', 'user_feedback'])
+            writer.writerow([
+                'timestamp', 'interviewer_message', 'user_feedback',
+                'rating_cultural', 'rating_fluency', 'rejected_options'
+            ])
 
-    # Clean and prepare the messages
     if interviewer_message:
-        if type(interviewer_message) == str:
-            interviewer_content = interviewer_message
-        else:
-            interviewer_content = interviewer_message.content
+        interviewer_content = (
+            interviewer_message if type(interviewer_message) == str
+            else interviewer_message.content
+        )
     else:
         interviewer_content = ''
+
     feedback_content = feedback_message.content if feedback_message else ''
-    
-    # Append the feedback
+
+    metadata         = feedback_message.metadata if feedback_message and feedback_message.metadata else {}
+    rating_cultural  = metadata.get('rating_cultural', '')
+    rating_fluency   = metadata.get('rating_fluency', '')
+    rejected_options = metadata.get('rejected_options', [])
+
     with open(feedback_file, 'a', newline='', encoding='utf-8') as f:
         writer = csv.writer(f, quoting=csv.QUOTE_ALL, escapechar='\\')
         writer.writerow([
             feedback_message.timestamp.isoformat(),
             interviewer_content,
-            feedback_content
+            feedback_content,
+            rating_cultural,
+            rating_fluency,
+            rejected_options,
         ])
         
 def read_from_pdf(file_path: str):

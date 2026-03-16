@@ -383,64 +383,52 @@ class InterviewSession:
             asyncio.create_task(self._notify_participants(message))
 
     def add_message_to_chat_history(self, role: str, content: str = "", reply_to: str = "",
-                                    message_type: str = MessageType.CONVERSATION):
-        """Add a message to the chat history"""
-
-        # Reject messages if session is not in progress
+                                message_type: str = MessageType.CONVERSATION,
+                                rating_cultural: int = None, rating_fluency: int = None,
+                                rejected_options: list = None):
         if not self.session_in_progress:
             return
 
-        # Set fixed content for skip and like messages
         if message_type == MessageType.SKIP:
             content = "Skip the question"
         elif message_type == MessageType.LIKE:
             content = "Like the question"
 
+        metadata = {"reply_to": reply_to}
+        if rating_cultural is not None:
+            metadata["rating_cultural"] = rating_cultural
+        if rating_fluency is not None:
+            metadata["rating_fluency"] = rating_fluency
+        if rejected_options:
+            metadata["rejected_options"] = rejected_options   # ← new
+
         print()
-        print("====== METADATA", {"reply_to": reply_to})
+        print("====== METADATA", metadata)
         print()
 
-        # Create message object
         message = Message(
             id=str(uuid.uuid4()),
             type=message_type,
             role=role,
             content=content,
             timestamp=datetime.now(),
-            metadata={"reply_to": reply_to},
+            metadata=metadata,
         )
 
         if role == "User":
             self._last_message_time = message.timestamp
         elif role == "Interviewer" and self._last_user_message is not None:
             self._last_user_message = None
-        
-        # # Log feedback
-        # if message_type != MessageType.CONVERSATION:
-        #     save_feedback_to_csv(
-        #         self.chat_history[-1], message, self.user_id, self.session_id)
 
-        # Notify participants if message is a skip or conversation
-        if message_type == MessageType.SKIP or \
-              message_type == MessageType.CONVERSATION:
-            
-            # Add message to chat history
-            save_feedback_to_csv(
-                reply_to, message, self.user_id, self.session_id)
+        if message_type == MessageType.SKIP or message_type == MessageType.CONVERSATION:
+            save_feedback_to_csv(reply_to, message, self.user_id, self.session_id)
             self.chat_history.append(message)
-            SessionLogger.log_to_file(
-                "chat_history", f"{message.role}: {message.content}")
-            
-            # Notify participants
+            SessionLogger.log_to_file("chat_history", f"{message.role}: {message.content}")
             asyncio.create_task(self._notify_participants(message))
 
-
         SessionLogger.log_to_file(
-            "execution_log", 
-            (
-                f"[CHAT_HISTORY] {message.role}'s message has been added "
-                f"to chat history."
-            )
+            "execution_log",
+            f"[CHAT_HISTORY] {message.role}'s message has been added to chat history."
         )
 
     async def run(self):

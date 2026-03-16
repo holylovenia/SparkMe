@@ -4,151 +4,6 @@
     <meta charset="UTF-8">
     <title>AI Interview Chat</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <style>
-        .instructions-panel {
-            background: #f5f5f5;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-        .instructions-panel h3 {
-            margin-top: 0;
-            color: #333;
-        }
-        .instructions-panel ul {
-            margin: 10px 0;
-            padding-left: 20px;
-        }
-        .instructions-panel li {
-            margin: 8px 0;
-            color: #666;
-        }
-        .control-panel {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-            margin-bottom: 15px;
-            flex-wrap: wrap;
-        }
-        .toggle-switch {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .toggle-switch input[type="checkbox"] {
-            width: 40px;
-            height: 20px;
-            cursor: pointer;
-        }
-        .toggle-switch label {
-            cursor: pointer;
-            user-select: none;
-        }
-        #end-session-btn {
-            background-color: #ff9800;
-            color: white;
-            padding: 12px 24px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
-            margin-left: auto;
-        }
-        #end-session-btn:hover {
-            background-color: #f57c00;
-        }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.7; }
-        }
-        #status {
-            margin-top: 10px;
-            color: #666;
-            font-style: italic;
-        }
-        .tts-indicator {
-            display: inline-block;
-            margin-left: 5px;
-            color: #2196F3;
-        }
-        #chat-form {
-            display: flex !important;
-            align-items: center !important;
-            justify-content: flex-start !important;
-            gap: 10px !important;
-            position: relative !important;
-            padding: 10px 0;
-        }
-        #chat-input {
-            flex: 1 !important;
-            min-height: 42px;
-            padding: 10px;
-            border-radius: 18px;
-            border: 1px solid #ccc;
-            resize: none;
-            margin: 0 !important;
-        }
-        #record-toggle {
-            width: 40px !important;
-            height: 40px !important;
-            min-width: 40px !important;
-            border-radius: 50%;
-            background: #eee;
-            display: flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            border: none;
-            cursor: pointer;
-            margin: 0 !important;
-            position: static !important;
-            flex-shrink: 0 !important;
-            z-index: 1;
-        }
-        .chat-send {
-            width: 40px !important;
-            height: 40px !important;
-            min-width: 40px !important;
-            border-radius: 50%;
-            border: none;
-            background: #4CAF50;
-            color: white;
-            font-size: 18px;
-            cursor: pointer;
-            display: flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            margin: 0 !important;
-            position: static !important;
-            flex-shrink: 0 !important;
-            z-index: 1;
-        }
-        #record-toggle::before { content: "🎤"; font-size: 18px; }
-        #record-toggle.recording::before { content: "⏹️"; }
-        .chat-send:disabled {
-            background: #bdbdbd !important;
-            cursor: not-allowed;
-            opacity: 0.7;
-        }
-        #record-toggle:disabled {
-            background: #e0e0e0 !important;
-            cursor: not-allowed;
-            opacity: 0.6;
-        }
-        #chat-input:disabled {
-            background: #f3f3f3;
-            cursor: not-allowed;
-        }
-
-        /* ── NEW: pending-like hint on the input ── */
-        #chat-input.awaiting-like {
-            border-color: #ff9800;
-            background: #fff8f0;
-        }
-        #chat-input.awaiting-like::placeholder {
-            color: #e65100;
-        }
-    </style>
 </head>
 <body>
     <div class="chat-container">
@@ -201,8 +56,13 @@
         let pollingInterval = null;
         let isInitializing = false;
         let lastLikedMessageText = null;
+        let lastRejectedOptions = [];
 
-        // ── NEW: tracks how many bot messages currently have an unclicked like button
+        // ── Rating values from the last submitted rating form
+        let lastRatingCultural = null;
+        let lastRatingFluency  = null;
+
+        // tracks how many bot messages currently have an unsubmitted rating form
         let pendingLikeCount = 0;
 
         const MIN_SESSION_DURATION_MS = 45 * 60 * 1000;
@@ -219,10 +79,8 @@
             chatBox.scrollTop = chatBox.scrollHeight;
         }
 
-        // ── NEW: central helpers that honour both session-ended AND pending-like states
         function setChatInputsLocked(locked, reason) {
-            // Only called for the pending-like lock; session-ended is handled by disableChatInputs()
-            if (isSessionCompleted) return; // session end takes precedence
+            if (isSessionCompleted) return;
 
             const input   = document.getElementById('chat-input');
             const sendBtn = document.querySelector('#chat-form button[type="submit"]');
@@ -234,7 +92,7 @@
 
             if (locked) {
                 input.classList.add('awaiting-like');
-                input.placeholder = reason || '👍 Click "Like" on a response above before continuing…';
+                input.placeholder = reason || '⭐ Rate the response above before continuing…';
             } else {
                 input.classList.remove('awaiting-like');
                 input.placeholder = 'Type your message...';
@@ -263,6 +121,79 @@
             };
         }
 
+        // ===================================================================
+        // RATING FORM BUILDER
+        // ===================================================================
+        /**
+         * Builds and appends the rating form inside msgDiv, after the like button
+         * is removed. Resolves once the user submits valid ratings.
+         */
+        function buildRatingForm(msgDiv, messageId) {
+            return new Promise((resolve) => {
+                const uid = messageId.replace(/[^a-zA-Z0-9]/g, '_');
+
+                const form = document.createElement('div');
+                form.className = 'rating-form';
+                form.innerHTML = `
+                    <p>Rate this response</p>
+
+                    <div class="rating-row">
+                        <label>Cultural correctness</label>
+                        <div class="star-group" id="cultural-stars-${uid}">
+                            <input type="radio" name="cultural_${uid}" id="c5_${uid}" value="5"><label for="c5_${uid}" title="5">★</label>
+                            <input type="radio" name="cultural_${uid}" id="c4_${uid}" value="4"><label for="c4_${uid}" title="4">★</label>
+                            <input type="radio" name="cultural_${uid}" id="c3_${uid}" value="3"><label for="c3_${uid}" title="3">★</label>
+                            <input type="radio" name="cultural_${uid}" id="c2_${uid}" value="2"><label for="c2_${uid}" title="2">★</label>
+                            <input type="radio" name="cultural_${uid}" id="c1_${uid}" value="1"><label for="c1_${uid}" title="1">★</label>
+                        </div>
+                    </div>
+
+                    <div class="rating-row">
+                        <label>Fluency</label>
+                        <div class="star-group" id="fluency-stars-${uid}">
+                            <input type="radio" name="fluency_${uid}" id="f5_${uid}" value="5"><label for="f5_${uid}" title="5">★</label>
+                            <input type="radio" name="fluency_${uid}" id="f4_${uid}" value="4"><label for="f4_${uid}" title="4">★</label>
+                            <input type="radio" name="fluency_${uid}" id="f3_${uid}" value="3"><label for="f3_${uid}" title="3">★</label>
+                            <input type="radio" name="fluency_${uid}" id="f2_${uid}" value="2"><label for="f2_${uid}" title="2">★</label>
+                            <input type="radio" name="fluency_${uid}" id="f1_${uid}" value="1"><label for="f1_${uid}" title="1">★</label>
+                        </div>
+                    </div>
+
+                    <button class="rating-submit-btn" type="button" disabled>Submit rating</button>
+                `;
+
+                msgDiv.appendChild(form);
+                scrollToBottom();
+
+                const submitBtn = form.querySelector('.rating-submit-btn');
+
+                // Enable submit only when both dimensions are rated
+                function checkReady() {
+                    const hasCultural = form.querySelector(`input[name="cultural_${uid}"]:checked`);
+                    const hasFluency  = form.querySelector(`input[name="fluency_${uid}"]:checked`);
+                    submitBtn.disabled = !(hasCultural && hasFluency);
+                }
+                form.querySelectorAll('input[type="radio"]').forEach(r => r.addEventListener('change', checkReady));
+
+                submitBtn.addEventListener('click', () => {
+                    const cultural = parseInt(form.querySelector(`input[name="cultural_${uid}"]:checked`).value, 10);
+                    const fluency  = parseInt(form.querySelector(`input[name="fluency_${uid}"]:checked`).value, 10);
+
+                    // Persist so the next send-message call can include them
+                    lastRatingCultural = cultural;
+                    lastRatingFluency  = fluency;
+
+                    // Replace the form with a small confirmation badge
+                    form.innerHTML = `<span class="rating-done-badge">✓ Rated — cultural: ${cultural}/5 · fluency: ${fluency}/5</span>`;
+
+                    resolve({ cultural, fluency });
+                });
+            });
+        }
+
+        // ===================================================================
+        // MESSAGE RENDERING
+        // ===================================================================
         function appendMessage(role, text, messageId) {
             if (messageId && seenMessageIds.has(messageId)) {
                 return false;
@@ -292,32 +223,33 @@
                     <p>${text.replace(/\n/g, '<br>')}</p>
                     <button class="like-btn" type="button">👍 Like</button>`;
 
-                // ── NEW: increment lock counter when the like button is attached
                 pendingLikeCount++;
                 refreshLikeLock();
 
                 const likeBtn = msgDiv.querySelector('.like-btn');
-                likeBtn.addEventListener('click', () => {
+                likeBtn.addEventListener('click', async () => {
                     const prefix = messageId.substring(0, messageId.lastIndexOf('|'));
 
                     const textParagraph = msgDiv.querySelector('p');
                     lastLikedMessageText = textParagraph ? textParagraph.innerText : null;
 
-                    // Remove sibling variants (each removed sibling also had a pending like)
+                    // Collect and remove sibling variants
+                    lastRejectedOptions = [];
                     document.querySelectorAll('#chat-box .message[data-msg-id]').forEach(el => {
                         const elId = el.dataset.msgId;
                         if (elId !== messageId && elId.startsWith(prefix)) {
-                            // That sibling's like button was also pending — account for it
-                            if (el.querySelector('.like-btn')) {
-                                pendingLikeCount--;
-                            }
+                            // Capture the text before removing
+                            const siblingText = el.querySelector('p');
+                            if (siblingText) lastRejectedOptions.push(siblingText.innerText);
+                            if (el.querySelector('.like-btn')) pendingLikeCount--;
                             el.remove();
                         }
                     });
 
-                    // ── NEW: decrement for the button the user actually clicked
-                    pendingLikeCount--;
                     likeBtn.remove();
+                    await buildRatingForm(msgDiv, messageId);
+
+                    pendingLikeCount--;
                     refreshLikeLock();
                 });
 
@@ -543,9 +475,8 @@
                 updateStatus('Session has ended. Recording disabled.');
                 return;
             }
-            // ── NEW: also block recording while a like is pending
             if (pendingLikeCount > 0) {
-                updateStatus('👍 Please click "Like" on a response before recording.');
+                updateStatus('⭐ Please rate the response above before recording.');
                 setTimeout(() => updateStatus(''), 2500);
                 return;
             }
@@ -581,9 +512,8 @@
                 updateStatus('Session has ended. You can no longer send messages.');
                 return;
             }
-            // ── NEW: block submission while a like is still pending
             if (pendingLikeCount > 0) {
-                updateStatus('👍 Please click "Like" on a response before continuing.');
+                updateStatus('⭐ Please rate the response above before continuing.');
                 setTimeout(() => updateStatus(''), 2500);
                 return;
             }
@@ -604,11 +534,14 @@
                 const response = await fetch('/api/send-message', {
                     method:  'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body:    JSON.stringify({
-                        session_token: sessionToken,
-                        message: text,
-                        type: "CONVERSATION",
-                        reply_to: lastLikedMessageText
+                    body: JSON.stringify({
+                        session_token:    sessionToken,
+                        message:          text,
+                        type:             "CONVERSATION",
+                        reply_to:         lastLikedMessageText,
+                        rating_cultural:  lastRatingCultural,
+                        rating_fluency:   lastRatingFluency,
+                        rejected_options: lastRejectedOptions,
                     }),
                 });
                 const result = await response.json();

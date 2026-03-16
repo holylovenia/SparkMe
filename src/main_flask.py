@@ -369,44 +369,42 @@ def start_session():
     })
 
 @app.route('/api/send-message', methods=['POST'])
-@login_required  # PROTECTED
+@login_required
 def send_message():
-    """Send a text message to the interview session"""
     data = request.json
-    session_token = data.get('session_token')
-    user_message = data.get('message')
-    reply_to = data.get('reply_to', None)
+    session_token    = data.get('session_token')
+    user_message     = data.get('message')
+    reply_to         = data.get('reply_to', None)
+    rating_cultural  = data.get('rating_cultural', None)
+    rating_fluency   = data.get('rating_fluency', None)
+    rejected_options = data.get('rejected_options', [])   # ← new
 
     print()
     print("======== REPLY TO", reply_to)
+    print("======== RATINGS  cultural=%s  fluency=%s" % (rating_cultural, rating_fluency))
+    print("======== REJECTED OPTIONS", rejected_options)
     print()
 
     session = get_session(session_token)
     if not session:
-        return jsonify({
-            'success': False,
-            'error': 'Invalid or expired session'
-        }), 400
+        return jsonify({'success': False, 'error': 'Invalid or expired session'}), 400
 
     if not session.session_in_progress:
-        return jsonify({
-            'success': False,
-            'error': 'Session has ended',
-            'session_completed': True
-        }), 400
+        return jsonify({'success': False, 'error': 'Session has ended', 'session_completed': True}), 400
 
     wrapper = get_session_wrapper(session_token)
     if wrapper and hasattr(wrapper, 'loop'):
-        wrapper.loop.call_soon_threadsafe(wrapper.interview_session.user.add_user_message, user_message, reply_to)
+        wrapper.loop.call_soon_threadsafe(
+            wrapper.interview_session.user.add_user_message,
+            user_message, reply_to, rating_cultural, rating_fluency, rejected_options
+        )
     else:
-        session.user.add_user_message(user_message, reply_to)
+        session.user.add_user_message(
+            user_message, reply_to, rating_cultural, rating_fluency, rejected_options
+        )
 
     bot_reply = wait_for_agent_response(session)
-
-    return jsonify({
-        'success': True,
-        'message': 'Message sent successfully'
-    })
+    return jsonify({'success': True, 'message': 'Message sent successfully'})
 
 @app.route('/api/send-voice', methods=['POST'])
 @login_required  # PROTECTED
