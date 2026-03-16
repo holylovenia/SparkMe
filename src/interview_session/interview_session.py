@@ -442,8 +442,9 @@ class InterviewSession:
 
         # In-interview Processing
         try:
-            # Interviewer initiate the conversation (if not in API mode)
-            if self.user is not None:
+            # Interviewer initiates only in non-API modes (terminal, agent).
+            # In API mode the human user speaks first.
+            if self.user is not None and self.interaction_mode != 'api':
                 await self._interviewer.on_message(None)
 
             # Monitor the session for completion and timeout

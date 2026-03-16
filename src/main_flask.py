@@ -487,7 +487,7 @@ def get_messages():
     
     if not is_session_done:
         current_turns = getattr(session, 'turns', 0)
-        max_turns = getattr(session, 'max_turns', float('inf'))
+        max_turns = getattr(session, 'max_turns', float('inf')) + 1
         if current_turns is not None and max_turns is not None and current_turns >= max_turns:
             is_session_done = True
         elif not session.session_in_progress and len(session.chat_history) > 0:
