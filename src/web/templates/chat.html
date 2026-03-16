@@ -167,7 +167,6 @@
 
                 const submitBtn = form.querySelector('.rating-submit-btn');
 
-                // Enable submit only when both dimensions are rated
                 function checkReady() {
                     const hasCultural = form.querySelector(`input[name="cultural_${uid}"]:checked`);
                     const hasFluency  = form.querySelector(`input[name="fluency_${uid}"]:checked`);
@@ -175,16 +174,47 @@
                 }
                 form.querySelectorAll('input[type="radio"]').forEach(r => r.addEventListener('change', checkReady));
 
-                submitBtn.addEventListener('click', () => {
+                submitBtn.addEventListener('click', async () => {
                     const cultural = parseInt(form.querySelector(`input[name="cultural_${uid}"]:checked`).value, 10);
                     const fluency  = parseInt(form.querySelector(`input[name="fluency_${uid}"]:checked`).value, 10);
 
-                    // Persist so the next send-message call can include them
+                    // Persist for send-message
                     lastRatingCultural = cultural;
                     lastRatingFluency  = fluency;
 
-                    // Replace the form with a small confirmation badge
+                    // Disable form while awaiting backend response
+                    submitBtn.disabled = true;
+                    submitBtn.textContent = 'Submitting…';
+
+                    let systemMessage = null;
+                    try {
+                        const resp = await fetch('/api/submit-rating', {
+                            method:  'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body:    JSON.stringify({
+                                session_token:    sessionToken,
+                                message_id:       messageId,
+                                reply_to:         lastLikedMessageText,
+                                rejected_options: lastRejectedOptions,
+                                rating_cultural:  cultural,
+                                rating_fluency:   fluency,
+                            }),
+                        });
+                        const result = await resp.json();
+                        if (result.success && result.system_message) {
+                            systemMessage = result.system_message;
+                        }
+                    } catch (err) {
+                        console.warn('Rating submission error:', err);
+                    }
+
+                    // Replace the form with a confirmation badge
                     form.innerHTML = `<span class="rating-done-badge">✓ Rated — cultural: ${cultural}/5 · fluency: ${fluency}/5</span>`;
+
+                    // Inject the system message directly below the rated bubble
+                    if (systemMessage) {
+                        appendSystemMessage(systemMessage);
+                    }
 
                     resolve({ cultural, fluency });
                 });
@@ -214,6 +244,17 @@
                     <img src="${imgUrl}" alt="${role}">
                     <p>${text.replace(/\n/g, '<br>')}</p>
                     </div>`;
+            } else if (className === 'system') {
+                const msgDiv = document.createElement('div');
+                msgDiv.className = 'message system';
+                msgDiv.dataset.msgId = messageId || '';
+                msgDiv.innerHTML = `
+                    <span class="system-icon">💡</span>
+                    <span>${text.replace(/\n/g, '<br>')}</span>
+                `;
+                chatBox.appendChild(msgDiv);
+                scrollToBottom();
+                return true;
             } else {
                 const msgDiv = document.createElement('div');
                 msgDiv.className = `message ${className}`;
@@ -258,6 +299,18 @@
 
             scrollToBottom();
             return true;
+        }
+
+        function appendSystemMessage(text) {
+            const chatBox = document.getElementById('chat-box');
+            const div = document.createElement('div');
+            div.className = 'message system';
+            div.innerHTML = `
+                <span class="system-icon">💡</span>
+                <span>${text.replace(/\n/g, '<br>')}</span>
+            `;
+            chatBox.appendChild(div);
+            scrollToBottom();
         }
 
         function stopCurrentAudio() {
@@ -377,6 +430,8 @@
                             appendMessage('user', msg.content, msg.id);
                         } else if (msg.role === 'Option' || msg.role === 'option') {
                             appendMessage('option', msg.content, msg.id);
+                        } else if (msg.role === 'System' || msg.role === 'system') {
+                            const wasNew = appendMessage('system', msg.content, msg.id);  // dedup-safe
                         }
                     });
                 }

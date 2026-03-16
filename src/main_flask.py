@@ -27,6 +27,7 @@ from src.utils.speech.text_to_speech import TextToSpeechBase, create_tts_engine
 from src.utils.speech.audio_player import AudioPlayerBase, create_audio_player
 from src.utils.speech.speech_to_text import create_stt_engine
 from src.interview_session.interview_session import InterviewSession
+from src.utils.data_process import save_rating_to_csv
 
 load_dotenv(override=True)
 
@@ -366,6 +367,54 @@ def start_session():
         'username': current_user.username,
         'message': 'Session started successfully',
         'was_existing': False
+    })
+
+@app.route('/api/submit-rating', methods=['POST'])
+@login_required
+def submit_rating():
+    data             = request.json
+    session_token    = data.get('session_token')
+    message_id       = data.get('message_id')
+    reply_to         = data.get('reply_to', None)
+    rating_cultural  = data.get('rating_cultural', None)
+    rating_fluency   = data.get('rating_fluency', None)
+    rejected_options = data.get('rejected_options', [])
+
+    print()
+    print("======== SUBMIT RATING  message_id=%s  cultural=%s  fluency=%s" % (
+        message_id, rating_cultural, rating_fluency))
+    print("======== REJECTED OPTIONS", rejected_options)
+    print()
+
+    session = get_session(session_token)
+    if not session:
+        return jsonify({'success': False, 'error': 'Invalid or expired session'}), 400
+
+    if not session.session_in_progress:
+        return jsonify({'success': False, 'error': 'Session has ended', 'session_completed': True}), 400
+
+    # Persist rating to CSV
+    save_rating_to_csv(
+        session_token=session_token,
+        message_id=message_id,
+        reply_to=reply_to,
+        rating_cultural=rating_cultural,
+        rating_fluency=rating_fluency,
+        rejected_options=rejected_options,
+        user_id=session.user_id,
+        session_id=session.session_id,
+    )
+
+    # Get dynamic guidance from the session
+    system_message = session.get_system_guidance(
+        message_id=message_id,
+        rating_cultural=rating_cultural,
+        rating_fluency=rating_fluency,
+    )
+
+    return jsonify({
+        'success':        True,
+        'system_message': system_message,   # None is fine — frontend checks
     })
 
 @app.route('/api/send-message', methods=['POST'])

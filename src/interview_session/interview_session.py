@@ -430,6 +430,31 @@ class InterviewSession:
             "execution_log",
             f"[CHAT_HISTORY] {message.role}'s message has been added to chat history."
         )
+    
+    def get_system_guidance(self, message_id: str,
+                        rating_cultural: int, rating_fluency: int) -> str | None:
+        """
+        Return a dynamic hint shown to the user before their next message.
+        Return None to show nothing.
+        """
+        hints = []
+
+        if rating_cultural is not None and rating_cultural <= 2:
+            hints.append(
+                "The previous response scored low on cultural correctness. "
+                "Try to incorporate more culturally specific context in your next answer."
+            )
+        if rating_fluency is not None and rating_fluency <= 2:
+            hints.append(
+                "The previous response scored low on fluency. "
+                "Consider rephrasing your answer using more natural language."
+            )
+
+        # Fallback: generic positive nudge
+        if not hints:
+            hints.append("Great — please continue with your next response.")
+
+        return " ".join(hints)
 
     async def run(self):
         """Run the interview session"""
