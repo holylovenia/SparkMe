@@ -5,7 +5,8 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, TypedDict
 import signal
 import contextlib
-
+import random
+import pandas as pd
 import time
 from tiktoken import get_encoding
 
@@ -93,6 +94,9 @@ class InterviewSession:
         self.user_id = user_config.get("user_id", "default_user")
         self._initial_additional_context_path = interview_config.get("additional_context_path", None)
         self._interview_description = interview_config.get("interview_description", "any topic")
+        self._follow_up_options = self._get_follow_up_options()
+        self._opening_topics = self._get_opening_topics()
+        self._countries = self._get_countries()
 
         # Session agenda setup
         self.session_agenda = SessionAgenda.get_last_session_agenda(self.user_id,
@@ -145,6 +149,8 @@ class InterviewSession:
         self.session_completed = False
         self._session_timeout = False
         self.max_turns = max_turns
+        self._opening_presented = False
+        self._first_guidance_given = False
 
         # Report auto-update states
         self.auto_report_update_in_progress = False
@@ -350,6 +356,15 @@ class InterviewSession:
             #         log_level="info"
             #     )
 
+    def _get_follow_up_options(self, data_path: str = "/home/holy/projects/SparkMe/data/data/follow-ups.csv") -> list[str]:
+        return pd.read_csv(data_path)['follow-up'].tolist()
+
+    def _get_opening_topics(self, data_path: str = "/home/holy/projects/SparkMe/data/data/topics.csv") -> list[str]:
+        return pd.read_csv(data_path)['topic'].tolist()
+
+    def _get_countries(self, data_path: str = "/home/holy/projects/SparkMe/data/data/regions.csv") -> list[str]:
+        return pd.read_csv(data_path)['country'].tolist()
+
     def present_as_options(self, role: str, content: list[str] = [],
                                     message_type: str = MessageType.OPTION,
                                     metadata: dict = {}):
@@ -389,6 +404,16 @@ class InterviewSession:
         if not self.session_in_progress:
             return
 
+        print("OPENING PRESENTED", self._opening_presented, role)
+        # ── Opening: suppress the interviewer's auto-generated first message
+        if role == "Interviewer" and not self._opening_presented:
+            self._opening_presented = True
+            topics    = random.sample(self._opening_topics, 4)
+            countries = random.sample(self._countries, 4)
+            options   = [f"{topic} in {country}" for topic, country in zip(topics, countries)]
+            self.present_as_options(role="Interviewer", content=options)
+            return
+
         if message_type == MessageType.SKIP:
             content = "Skip the question"
         elif message_type == MessageType.LIKE:
@@ -400,7 +425,7 @@ class InterviewSession:
         if rating_fluency is not None:
             metadata["rating_fluency"] = rating_fluency
         if rejected_options:
-            metadata["rejected_options"] = rejected_options   # ← new
+            metadata["rejected_options"] = rejected_options
 
         print()
         print("====== METADATA", metadata)
@@ -431,68 +456,48 @@ class InterviewSession:
             f"[CHAT_HISTORY] {message.role}'s message has been added to chat history."
         )
     
-    def get_system_guidance(self, message_id: str,
-                        rating_cultural: int, rating_fluency: int) -> str | None:
-        """
-        Return a dynamic hint shown to the user before their next message.
-        Return None to show nothing.
-        """
-        hints = []
+    def get_system_guidance(self, message_id: str) -> str | None:
+        if not self._first_guidance_given:
+            self._first_guidance_given = True
+            return "Please start the conversation with a prompt related to the topic you chose."
 
-        if rating_cultural is not None and rating_cultural <= 2:
-            hints.append(
-                "The previous response scored low on cultural correctness. "
-                "Try to incorporate more culturally specific context in your next answer."
-            )
-        if rating_fluency is not None and rating_fluency <= 2:
-            hints.append(
-                "The previous response scored low on fluency. "
-                "Consider rephrasing your answer using more natural language."
-            )
-
-        # Fallback: generic positive nudge
-        if not hints:
-            hints.append("Great — please continue with your next response.")
-
-        return " ".join(hints)
+        return f"Consider responding with: {random.sample(self._follow_up_options, 1)[0]}"
 
     async def run(self):
         """Run the interview session"""
-        # Augment session agenda with existing profile if applicable
-        await self.session_scribe.augment_session_agenda(additional_context_path=self._initial_additional_context_path)
+        await self.session_scribe.augment_session_agenda(
+            additional_context_path=self._initial_additional_context_path)
 
-        SessionLogger.log_to_file(
-            "execution_log", f"[RUN] Starting interview session")
+        SessionLogger.log_to_file("execution_log", f"[RUN] Starting interview session")
         self.session_in_progress = True
 
-        # In-interview Processing
         try:
-            # Interviewer initiates
             if self.user is not None:
-                await self._interviewer.on_message(None)
+                # Present opening options instead of invoking the interviewer directly.
+                # The interviewer will respond naturally once the user picks one.
+                self._opening_presented = True
+                topics    = random.sample(self._opening_topics, 4)
+                countries = random.sample(self._countries, 4)
+                options   = [f"{topic} in {country}" for topic, country in zip(topics, countries)]
+                self.present_as_options(role="Interviewer", content=options)
+                await asyncio.sleep(0)
 
-            # Monitor the session for completion and timeout
-            while self.session_in_progress or \
-                self.session_scribe.processing_in_progress:
+            while self.session_in_progress or self.session_scribe.processing_in_progress:
                 await asyncio.sleep(0.1)
 
-                # Check for timeout
                 if datetime.now() - self._last_message_time \
                         > timedelta(minutes=self.timeout_minutes):
                     SessionLogger.log_to_file(
-                        "execution_log", 
-                        (
-                            f"[TIMEOUT] Session timed out after "
-                            f"{self.timeout_minutes} minutes of inactivity"
-                        )
+                        "execution_log",
+                        f"[TIMEOUT] Session timed out after "
+                        f"{self.timeout_minutes} minutes of inactivity"
                     )
                     self.session_in_progress = False
                     self._session_timeout = True
                     break
 
         except Exception as e:
-            SessionLogger.log_to_file(
-                "execution_log", f"[RUN] Unexpected error: {str(e)}")
+            SessionLogger.log_to_file("execution_log", f"[RUN] Unexpected error: {str(e)}")
             raise e
 
         # # Post-interview Processing

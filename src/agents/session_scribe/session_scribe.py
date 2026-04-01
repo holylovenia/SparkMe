@@ -110,7 +110,7 @@ class SessionScribe(BaseAgent, Participant):
         if message.role == "Interviewer":
             self._last_interviewer_message = message
             # Add question to session agenda
-            self._add_question_to_session_agenda()
+            # self._add_question_to_session_agenda()
         elif message.role == "User":
             if self._last_interviewer_message:
                 asyncio.create_task(self._process_qa_pair(

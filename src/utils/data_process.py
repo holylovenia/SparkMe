@@ -10,7 +10,8 @@ from src.interview_session.session_models import Message
 
 def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
                        rating_cultural: int, rating_fluency: int,
-                       rejected_options: list, user_id: str, session_id: str):
+                       rejected_options: list, user_id: str, session_id: str,
+                       follow_up: str = None):
     """Persist like ratings and rejected variants to a dedicated CSV."""
 
     ratings_dir = os.path.join(os.getenv("LOGS_DIR", "logs"), user_id, 'ratings')
@@ -22,7 +23,7 @@ def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
             writer = csv.writer(f, quoting=csv.QUOTE_ALL, escapechar='\\')
             writer.writerow([
                 'timestamp', 'message_id', 'liked_response',
-                'rating_cultural', 'rating_fluency', 'rejected_options'
+                'rating_cultural', 'rating_fluency', 'rejected_options', 'follow_up'
             ])
 
     with open(ratings_file, 'a', newline='', encoding='utf-8') as f:
@@ -33,7 +34,8 @@ def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
             reply_to or '',
             rating_cultural if rating_cultural is not None else '',
             rating_fluency  if rating_fluency  is not None else '',
-            rejected_options,
+            ' | '.join(rejected_options) if rejected_options else '',
+            follow_up or '',
         ])
 
 

@@ -380,12 +380,6 @@ def submit_rating():
     rating_fluency   = data.get('rating_fluency', None)
     rejected_options = data.get('rejected_options', [])
 
-    print()
-    print("======== SUBMIT RATING  message_id=%s  cultural=%s  fluency=%s" % (
-        message_id, rating_cultural, rating_fluency))
-    print("======== REJECTED OPTIONS", rejected_options)
-    print()
-
     session = get_session(session_token)
     if not session:
         return jsonify({'success': False, 'error': 'Invalid or expired session'}), 400
@@ -393,7 +387,9 @@ def submit_rating():
     if not session.session_in_progress:
         return jsonify({'success': False, 'error': 'Session has ended', 'session_completed': True}), 400
 
-    # Persist rating to CSV
+    # Generate guidance first so it can be saved alongside the rating
+    system_message = session.get_system_guidance(message_id=message_id)
+
     save_rating_to_csv(
         session_token=session_token,
         message_id=message_id,
@@ -403,18 +399,12 @@ def submit_rating():
         rejected_options=rejected_options,
         user_id=session.user_id,
         session_id=session.session_id,
-    )
-
-    # Get dynamic guidance from the session
-    system_message = session.get_system_guidance(
-        message_id=message_id,
-        rating_cultural=rating_cultural,
-        rating_fluency=rating_fluency,
+        follow_up=system_message,
     )
 
     return jsonify({
         'success':        True,
-        'system_message': system_message,   # None is fine — frontend checks
+        'system_message': system_message,
     })
 
 @app.route('/api/send-message', methods=['POST'])
