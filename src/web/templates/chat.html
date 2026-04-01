@@ -57,6 +57,9 @@
         let isInitializing = false;
         let lastLikedMessageText = null;
         let lastRejectedOptions = [];
+        let openingSelected = false;
+        let lastChosenTopic   = null;
+        let lastChosenCountry = null;
 
         // ── Rating values from the last submitted rating form
         let lastRatingCultural = null;
@@ -198,6 +201,8 @@
                                 rejected_options: lastRejectedOptions,
                                 rating_cultural:  cultural,
                                 rating_fluency:   fluency,
+                                topic:            lastChosenTopic,    // ← new
+                                country:          lastChosenCountry,  // ← new
                             }),
                         });
                         const result = await resp.json();
@@ -274,12 +279,10 @@
                     const textParagraph = msgDiv.querySelector('p');
                     lastLikedMessageText = textParagraph ? textParagraph.innerText : null;
 
-                    // Collect and remove sibling variants
                     lastRejectedOptions = [];
                     document.querySelectorAll('#chat-box .message[data-msg-id]').forEach(el => {
                         const elId = el.dataset.msgId;
                         if (elId !== messageId && elId.startsWith(prefix)) {
-                            // Capture the text before removing
                             const siblingText = el.querySelector('p');
                             if (siblingText) lastRejectedOptions.push(siblingText.innerText);
                             if (el.querySelector('.like-btn')) pendingLikeCount--;
@@ -288,7 +291,40 @@
                     });
 
                     likeBtn.remove();
-                    await buildRatingForm(msgDiv, messageId);
+
+                    if (!openingSelected) {
+                        openingSelected = true;
+
+                        // Parse "{topic} in {country}"
+                        const parts = lastLikedMessageText.split(' in ');
+                        lastChosenTopic   = parts[0] ? parts[0].trim() : null;
+                        lastChosenCountry = parts.slice(1).join(' in ').trim() || null;
+
+                        try {
+                            const resp = await fetch('/api/submit-rating', {
+                                method:  'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body:    JSON.stringify({
+                                    session_token:    sessionToken,
+                                    message_id:       messageId,
+                                    reply_to:         lastLikedMessageText,
+                                    rejected_options: lastRejectedOptions,
+                                    rating_cultural:  null,
+                                    rating_fluency:   null,
+                                    topic:            lastChosenTopic,    // ← new
+                                    country:          lastChosenCountry,  // ← new
+                                }),
+                            });
+                            const result = await resp.json();
+                            if (result.success && result.system_message) {
+                                appendSystemMessage(result.system_message);
+                            }
+                        } catch (err) {
+                            console.warn('Opening selection error:', err);
+                        }
+                    } else {
+                        await buildRatingForm(msgDiv, messageId);
+                    }
 
                     pendingLikeCount--;
                     refreshLikeLock();
@@ -597,6 +633,8 @@
                         rating_cultural:  lastRatingCultural,
                         rating_fluency:   lastRatingFluency,
                         rejected_options: lastRejectedOptions,
+                        topic:            lastChosenTopic,     // ← new
+                        country:          lastChosenCountry,   // ← new
                     }),
                 });
                 const result = await response.json();

@@ -379,15 +379,13 @@ def submit_rating():
     rating_cultural  = data.get('rating_cultural', None)
     rating_fluency   = data.get('rating_fluency', None)
     rejected_options = data.get('rejected_options', [])
+    topic            = data.get('topic', None)    # ← new
+    country          = data.get('country', None)  # ← new
 
     session = get_session(session_token)
     if not session:
         return jsonify({'success': False, 'error': 'Invalid or expired session'}), 400
 
-    if not session.session_in_progress:
-        return jsonify({'success': False, 'error': 'Session has ended', 'session_completed': True}), 400
-
-    # Generate guidance first so it can be saved alongside the rating
     system_message = session.get_system_guidance(message_id=message_id)
 
     save_rating_to_csv(
@@ -400,7 +398,13 @@ def submit_rating():
         user_id=session.user_id,
         session_id=session.session_id,
         follow_up=system_message,
+        topic=topic,      # ← new
+        country=country,  # ← new
     )
+
+    if getattr(session, '_farewell_done', False):
+        session._farewell_rated = True
+        system_message = None
 
     return jsonify({
         'success':        True,
@@ -410,19 +414,15 @@ def submit_rating():
 @app.route('/api/send-message', methods=['POST'])
 @login_required
 def send_message():
-    data = request.json
+    data             = request.json
     session_token    = data.get('session_token')
     user_message     = data.get('message')
     reply_to         = data.get('reply_to', None)
     rating_cultural  = data.get('rating_cultural', None)
     rating_fluency   = data.get('rating_fluency', None)
-    rejected_options = data.get('rejected_options', [])   # ← new
-
-    print()
-    print("======== REPLY TO", reply_to)
-    print("======== RATINGS  cultural=%s  fluency=%s" % (rating_cultural, rating_fluency))
-    print("======== REJECTED OPTIONS", rejected_options)
-    print()
+    rejected_options = data.get('rejected_options', [])
+    topic            = data.get('topic', None)    # ← new
+    country          = data.get('country', None)  # ← new
 
     session = get_session(session_token)
     if not session:
@@ -435,14 +435,18 @@ def send_message():
     if wrapper and hasattr(wrapper, 'loop'):
         wrapper.loop.call_soon_threadsafe(
             wrapper.interview_session.user.add_user_message,
-            user_message, reply_to, rating_cultural, rating_fluency, rejected_options
+            user_message, reply_to, rating_cultural, rating_fluency, rejected_options,
+            topic, country
         )
     else:
         session.user.add_user_message(
-            user_message, reply_to, rating_cultural, rating_fluency, rejected_options
+            user_message, reply_to, rating_cultural, rating_fluency, rejected_options,
+            topic, country
         )
 
-    bot_reply = wait_for_agent_response(session)
+    if not getattr(session, '_session_ending', False):
+        wait_for_agent_response(session)
+
     return jsonify({'success': True, 'message': 'Message sent successfully'})
 
 @app.route('/api/send-voice', methods=['POST'])
@@ -494,14 +498,13 @@ def send_voice():
             temp_audio_path.unlink()
 
 @app.route('/api/get-messages', methods=['GET'])
-@login_required  # PROTECTED
+@login_required
 def get_messages():
     """Get new messages from the session (polling endpoint)"""
     session_token = request.args.get('session_token')
 
     session = get_session(session_token)
     if not session:
-        print(f"[get_messages] Invalid session_token={session_token}")
         return jsonify({
             'success': False,
             'error': 'Invalid or expired session',
@@ -522,22 +525,17 @@ def get_messages():
         elif hasattr(session.user, 'get_and_clear_messages'):
             messages = session.user.get_and_clear_messages() or []
 
-    is_session_done = session.session_completed
-    
-    if not is_session_done:
-        current_turns = getattr(session, 'turns', 0)
-        max_turns = getattr(session, 'max_turns', float('inf')) + 1
-        if current_turns is not None and max_turns is not None and current_turns >= max_turns:
-            is_session_done = True
-        elif not session.session_in_progress and len(session.chat_history) > 0:
-            is_session_done = True
+    is_session_done = (
+        getattr(session, '_farewell_rated', False)
+        or session.session_completed
+    )
 
     if is_session_done:
         end_msg_id = f"system_end_{session_token}"
         if not any(m.get('id') == end_msg_id for m in messages):
             messages.append({
                 'id': end_msg_id,
-                'role': 'Interviewer',
+                'role': 'System',
                 'content': "Session has been completed! Thank you for your participation in our interview! Your responses have been recorded!",
                 'timestamp': time.time()
             })
@@ -697,32 +695,27 @@ def get_voice_response():
     return ('', 202)  # Tell client to poll again
 
 @app.route('/api/end-session', methods=['POST'])
-@login_required  # PROTECTED
+@login_required
 def end_session():
-    """End the interview session - background tasks will complete gracefully"""
+    """Trigger one final interviewer response then close the session."""
     data = request.json
     session_token = data.get('session_token')
 
     wrapper = get_session_wrapper(session_token)
     if not wrapper:
-        return jsonify({
-            'success': False,
-            'error': 'Invalid or expired session'
-        }), 400
+        return jsonify({'success': False, 'error': 'Invalid or expired session'}), 400
 
     session = wrapper.interview_session
 
-    # End the session (marks as not in progress, stops new tasks)
-    session.end_session()
+    if getattr(session, '_session_ending', False) or getattr(session, '_farewell_done', False):
+        return jsonify({'success': True, 'message': 'Session is already ending'})
 
-    app.logger.info(f"Session {session_token} ended by user, background tasks will complete")
-
-    # Don't remove from active_sessions yet - let background tasks complete
-    # They'll be cleaned up when session.run() completes or by timeout cleanup
+    asyncio.run_coroutine_threadsafe(session.trigger_farewell(), wrapper.loop)
+    app.logger.info(f"Session {session_token} farewell triggered by user")
 
     return jsonify({
         'success': True,
-        'message': 'Session ending, background tasks will complete shortly',
+        'message': 'Session ending — one final response will be delivered.',
         'session_id': session.session_id,
         'user_id': session.user_id
     })

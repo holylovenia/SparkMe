@@ -11,7 +11,8 @@ from src.interview_session.session_models import Message
 def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
                        rating_cultural: int, rating_fluency: int,
                        rejected_options: list, user_id: str, session_id: str,
-                       follow_up: str = None):
+                       follow_up: str = None,
+                       topic: str = None, country: str = None):
     """Persist like ratings and rejected variants to a dedicated CSV."""
 
     ratings_dir = os.path.join(os.getenv("LOGS_DIR", "logs"), user_id, 'ratings')
@@ -23,7 +24,8 @@ def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
             writer = csv.writer(f, quoting=csv.QUOTE_ALL, escapechar='\\')
             writer.writerow([
                 'timestamp', 'message_id', 'liked_response',
-                'rating_cultural', 'rating_fluency', 'rejected_options', 'follow_up'
+                'rating_cultural', 'rating_fluency', 'rejected_options',
+                'follow_up', 'topic', 'country',   # ← new
             ])
 
     with open(ratings_file, 'a', newline='', encoding='utf-8') as f:
@@ -36,12 +38,13 @@ def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
             rating_fluency  if rating_fluency  is not None else '',
             ' | '.join(rejected_options) if rejected_options else '',
             follow_up or '',
+            topic   or '',   # ← new
+            country or '',   # ← new
         ])
 
 
-def save_feedback_to_csv(interviewer_message: Message, feedback_message: Message, user_id: str, session_id: str):
-    """Save feedback message to a CSV file with the last conversation message"""
-
+def save_feedback_to_csv(interviewer_message: Message, feedback_message: Message,
+                         user_id: str, session_id: str):
     feedback_dir = os.path.join(os.getenv("LOGS_DIR", "logs"), user_id, 'feedback')
     os.makedirs(feedback_dir, exist_ok=True)
     feedback_file = os.path.join(feedback_dir, f'session_{session_id}.csv')
@@ -51,7 +54,8 @@ def save_feedback_to_csv(interviewer_message: Message, feedback_message: Message
             writer = csv.writer(f, quoting=csv.QUOTE_ALL, escapechar='\\')
             writer.writerow([
                 'timestamp', 'interviewer_message', 'user_feedback',
-                'rating_cultural', 'rating_fluency', 'rejected_options'
+                'rating_cultural', 'rating_fluency', 'rejected_options',
+                'topic', 'country',   # ← new
             ])
 
     if interviewer_message:
@@ -67,7 +71,9 @@ def save_feedback_to_csv(interviewer_message: Message, feedback_message: Message
     metadata         = feedback_message.metadata if feedback_message and feedback_message.metadata else {}
     rating_cultural  = metadata.get('rating_cultural', '')
     rating_fluency   = metadata.get('rating_fluency', '')
-    rejected_options = metadata.get('rejected_options', [])
+    rejected_options = ' | '.join(metadata.get('rejected_options', []))
+    topic            = metadata.get('topic', '')    # ← new
+    country          = metadata.get('country', '')  # ← new
 
     with open(feedback_file, 'a', newline='', encoding='utf-8') as f:
         writer = csv.writer(f, quoting=csv.QUOTE_ALL, escapechar='\\')
@@ -78,6 +84,8 @@ def save_feedback_to_csv(interviewer_message: Message, feedback_message: Message
             rating_cultural,
             rating_fluency,
             rejected_options,
+            topic,
+            country,
         ])
         
 def read_from_pdf(file_path: str):

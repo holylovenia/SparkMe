@@ -151,6 +151,9 @@ class InterviewSession:
         self.max_turns = max_turns
         self._opening_presented = False
         self._first_guidance_given = False
+        self._session_ending = False
+        self._farewell_done  = False
+        self._farewell_rated = False
 
         # Report auto-update states
         self.auto_report_update_in_progress = False
@@ -330,10 +333,9 @@ class InterviewSession:
                     self._user_message_count >= self.max_turns:
                 SessionLogger.log_to_file(
                     "execution_log",
-                    f"[TURNS] Maximum turns ({self.max_turns}) reached. "
-                    f"Ending session."
+                    f"[TURNS] Maximum turns ({self.max_turns}) reached. Triggering farewell."
                 )
-                self.session_in_progress = False
+                asyncio.create_task(self.trigger_farewell())   # ← was: self.session_in_progress = False
                 # Save final token usage summary
                 final_summary_path = self.token_tracker.save_final_summary()
                 SessionLogger.log_to_file(
@@ -400,18 +402,9 @@ class InterviewSession:
     def add_message_to_chat_history(self, role: str, content: str = "", reply_to: str = "",
                                 message_type: str = MessageType.CONVERSATION,
                                 rating_cultural: int = None, rating_fluency: int = None,
-                                rejected_options: list = None):
+                                rejected_options: list = None,
+                                topic: str = None, country: str = None):
         if not self.session_in_progress:
-            return
-
-        print("OPENING PRESENTED", self._opening_presented, role)
-        # ── Opening: suppress the interviewer's auto-generated first message
-        if role == "Interviewer" and not self._opening_presented:
-            self._opening_presented = True
-            topics    = random.sample(self._opening_topics, 4)
-            countries = random.sample(self._countries, 4)
-            options   = [f"{topic} in {country}" for topic, country in zip(topics, countries)]
-            self.present_as_options(role="Interviewer", content=options)
             return
 
         if message_type == MessageType.SKIP:
@@ -426,10 +419,10 @@ class InterviewSession:
             metadata["rating_fluency"] = rating_fluency
         if rejected_options:
             metadata["rejected_options"] = rejected_options
-
-        print()
-        print("====== METADATA", metadata)
-        print()
+        if topic is not None:
+            metadata["topic"] = topic       # ← new
+        if country is not None:
+            metadata["country"] = country   # ← new
 
         message = Message(
             id=str(uuid.uuid4()),
@@ -462,6 +455,23 @@ class InterviewSession:
             return "Please start the conversation with a prompt related to the topic you chose."
 
         return f"Consider responding with: {random.sample(self._follow_up_options, 1)[0]}"
+
+    async def trigger_farewell(self):
+        """Deliver one final interviewer turn then mark the session closed."""
+        if self._session_ending:
+            return  # already in flight
+        try:
+            self._session_ending = True
+            SessionLogger.log_to_file("execution_log", "[FAREWELL] Triggering farewell response.")
+            await self._interviewer.on_message(None)
+        except Exception as e:
+            SessionLogger.log_to_file("execution_log", f"[FAREWELL] Error: {str(e)}")
+        finally:
+            self._farewell_done     = True
+            self.session_in_progress = False
+            if hasattr(self, 'token_tracker'):
+                self.token_tracker.save_final_summary()
+            SessionLogger.log_to_file("execution_log", "[FAREWELL] Session closed after farewell.")
 
     async def run(self):
         """Run the interview session"""
