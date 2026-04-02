@@ -19,9 +19,9 @@ def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
     ratings_dir = os.path.join(os.getenv("LOGS_DIR", "logs"), user_id, 'ratings')
     os.makedirs(ratings_dir, exist_ok=True)
 
-    # New naming: {user_id}_{session_id}_{country}_{topic}_{n_turns}
+    # New naming: {session_id}_{country}_{topic}_{n_turns}
     if all([sel_session_id, country, topic, n_turns]):
-        filename = f'{user_id}_{sel_session_id}_{country}_{topic}_{n_turns}.csv'
+        filename = f'{sel_session_id}_{country}_{topic}_{n_turns}.csv'
     else:
         filename = f'session_{session_id}.csv'
 
