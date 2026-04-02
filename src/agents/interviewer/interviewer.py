@@ -1,4 +1,5 @@
 import os
+import random
 import re
 from typing import TYPE_CHECKING, TypedDict, Tuple
 
@@ -160,48 +161,59 @@ class Interviewer(BaseAgent, Participant):
         return quantified_question
 
     async def on_message(self, message: Message):
-
         if message:
             SessionLogger.log_to_file(
                 "execution_log",
                 f"[NOTIFY] Interviewer received message from {message.role}"
             )
-            self.add_event(sender=message.role, tag="message",
-                           content=message.content)
-        
-        self._turn_to_respond = True
-        iterations = 0
+            self.add_event(sender=message.role, tag="message", content=message.content)
 
-        responses = []
-        while self._turn_to_respond and iterations < self._max_consideration_iterations:
-            prompt = self._get_prompt()
-            self.add_event(sender=self.name, tag="llm_prompt", content=prompt)
-            response = await self.call_engine_async(self.engines[iterations], prompt)
-            print(f"{GREEN}Interviewer:\n{response}{RESET}")
-            # try:
-            #     # await self.handle_tool_calls_async(response)
-            #     self.interview_session.present_as_option(
-            #         role=self.title, content=response, message_type=MessageType.CONVERSATION)
-            #     # self.interview_session.add_message_to_chat_history(
-            #         # role=self.title, content=response, message_type=MessageType.CONVERSATION)
-            # except Exception as e:
-            #     print(f"Error calling tool: {e}. Use the raw response as the output.")
-            #     await self._handle_response(response)
-            responses.append(response)
-            iterations += 1
-            if iterations >= self._max_consideration_iterations:
-                self.add_event(
-                    sender="system",
-                    tag="error",
-                    content=f"Exceeded maximum number of consideration "
-                    f"iterations ({self._max_consideration_iterations})"
+        self._turn_to_respond = True
+
+        prompt = self._get_prompt()
+        self.add_event(sender=self.name, tag="llm_prompt", content=prompt)
+
+        _responses = []
+        _model_names = []
+        for i, engine in enumerate(self.engines):
+            try:
+                response = await self.call_engine_async(engine, prompt)
+                print(f"{GREEN}Interviewer (model {i+1} — {engine.model_name}):\n{response}{RESET}")
+                _responses.append(response)
+                _model_names.append(engine.model_name)
+            except Exception as e:
+                SessionLogger.log_to_file(
+                    "execution_log",
+                    f"[INTERVIEWER] Engine {i+1} ({engine.model_name}) failed: {e}",
+                    log_level="error"
                 )
+
+        if not _responses:
+            SessionLogger.log_to_file(
+                "execution_log",
+                "[INTERVIEWER] All engines failed — no responses to present.",
+                log_level="error"
+            )
+            self._turn_to_respond = False
+            return
+
+        # shuffle the responses
+        temp = list(zip(_model_names, _responses))  # Pair the elements
+        random.shuffle(temp)  # Shuffle the pairs
+        model_names, responses = zip(*temp)  # Unzip into separate lists
+
         try:
             self.interview_session.present_as_options(
-                role=self.title, content=responses, message_type=MessageType.CONVERSATION)
+                role=self.title,
+                content=responses,
+                message_type=MessageType.CONVERSATION,
+                model_names=model_names,   # ← new
+            )
         except Exception as e:
-            print(f"Error calling tool: {e}. Use the raw response as the output.")
-            await self._handle_response(response)
+            print(f"Error presenting as options: {e}. Falling back to first response.")
+            await self._handle_response(responses[0])
+
+        self._turn_to_respond = False
 
     def _get_prompt(self):
         '''Gets the prompt for the interviewer. '''

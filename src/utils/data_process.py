@@ -11,8 +11,8 @@ from src.interview_session.session_models import Message
 def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
                        rating_cultural: int, rating_fluency: int,
                        rejected_options: list, user_id: str, session_id: str,
-                       follow_up: str = None,
-                       topic: str = None, country: str = None):
+                       follow_up: str = None, topic: str = None, country: str = None,
+                       liked_model: str = None, rejected_models: list = None):
     """Persist like ratings and rejected variants to a dedicated CSV."""
 
     ratings_dir = os.path.join(os.getenv("LOGS_DIR", "logs"), user_id, 'ratings')
@@ -25,7 +25,8 @@ def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
             writer.writerow([
                 'timestamp', 'message_id', 'liked_response',
                 'rating_cultural', 'rating_fluency', 'rejected_options',
-                'follow_up', 'topic', 'country',   # ← new
+                'follow_up', 'topic', 'country',
+                'liked_model', 'rejected_options_models',   # ← new
             ])
 
     with open(ratings_file, 'a', newline='', encoding='utf-8') as f:
@@ -36,10 +37,12 @@ def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
             reply_to or '',
             rating_cultural if rating_cultural is not None else '',
             rating_fluency  if rating_fluency  is not None else '',
-            ' | '.join(rejected_options) if rejected_options else '',
+            rejected_options or '',
             follow_up or '',
-            topic   or '',   # ← new
-            country or '',   # ← new
+            topic   or '',
+            country or '',
+            liked_model or '',                                              # ← new
+            rejected_models or '',         # ← new
         ])
 
 

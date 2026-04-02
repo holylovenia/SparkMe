@@ -120,69 +120,71 @@ class SessionScribe(BaseAgent, Participant):
                 self._last_interviewer_message = None
      
     async def augment_session_agenda(self, additional_context_path: Optional[str] = None):
-        # If there is existing user profile, we load them
-        if additional_context_path and os.path.exists(additional_context_path):
-            if additional_context_path.endswith('.txt') or additional_context_path.endswith('.md'):
-                with open(additional_context_path, 'r', encoding='utf-8') as f:
-                    additional_context = f.read()
-            elif additional_context_path.endswith('.pdf'):
-                additional_context = read_from_pdf(additional_context_path)
-            else:
-                SessionLogger.log_to_file(
-                    "execution_log", f"[INIT] Existing user profile is IGNORED, currently only supports .txt, .md, and .pdf files"
-                )
+        return
+        # # If there is existing user profile, we load them
+        # if additional_context_path and os.path.exists(additional_context_path):
+        #     if additional_context_path.endswith('.txt') or additional_context_path.endswith('.md'):
+        #         with open(additional_context_path, 'r', encoding='utf-8') as f:
+        #             additional_context = f.read()
+        #     elif additional_context_path.endswith('.pdf'):
+        #         additional_context = read_from_pdf(additional_context_path)
+        #     else:
+        #         SessionLogger.log_to_file(
+        #             "execution_log", f"[INIT] Existing user profile is IGNORED, currently only supports .txt, .md, and .pdf files"
+        #         )
             
-            # Found initial context to be initialized with
-            SessionLogger.log_to_file(
-                "execution_log", f"[RUN] Found initial context to be initialized with, preparing an optimized session!"
-            )
+        #     # Found initial context to be initialized with
+        #     SessionLogger.log_to_file(
+        #         "execution_log", f"[RUN] Found initial context to be initialized with, preparing an optimized session!"
+        #     )
 
-            # Get user portrait and last meeting summary
-            await asyncio.gather(
-                self.interview_session.session_scribe._update_user_portrait(
-                    additional_context=additional_context
-                ),
-                self.interview_session.session_scribe._update_last_meeting_summary(
-                    additional_context=additional_context
-                ),
-                self.interview_session.session_scribe._update_subtopic_notes(
-                    additional_context=additional_context
-                )
-            )
+        #     # Get user portrait and last meeting summary
+        #     await asyncio.gather(
+        #         self.interview_session.session_scribe._update_user_portrait(
+        #             additional_context=additional_context
+        #         ),
+        #         self.interview_session.session_scribe._update_last_meeting_summary(
+        #             additional_context=additional_context
+        #         ),
+        #         self.interview_session.session_scribe._update_subtopic_notes(
+        #             additional_context=additional_context
+        #         )
+        #     )
 
-            # TODO update memory?
-            # Update session agenda notes and eventually coverage
-            await self._update_list_of_subtopics(additional_context=additional_context)
-            await self._update_subtopic_coverage()
+        #     # TODO update memory?
+        #     # Update session agenda notes and eventually coverage
+        #     await self._update_list_of_subtopics(additional_context=additional_context)
+        #     await self._update_subtopic_coverage()
 
     def _add_question_to_session_agenda(self):
-        if self._last_interviewer_message:
-            subtopic_id = str(self._last_interviewer_message.metadata.get('subtopic_id', ""))
-            question_text = self._last_interviewer_message.content.strip()
-            rubric = self._last_interviewer_message.metadata.get('rubric', None)
+        return
+        # if self._last_interviewer_message:
+        #     subtopic_id = str(self._last_interviewer_message.metadata.get('subtopic_id', ""))
+        #     question_text = self._last_interviewer_message.content.strip()
+        #     rubric = self._last_interviewer_message.metadata.get('rubric', None)
             
-            # Add question to QuestionBank if exists
-            adding_status = False
-            if self.interview_session.proposed_question_bank:
-                question = self.interview_session.proposed_question_bank.add_question(content=question_text, 
-                                                         subtopic_id=subtopic_id,
-                                                         rubric=rubric)
+        #     # Add question to QuestionBank if exists
+        #     adding_status = False
+        #     if self.interview_session.proposed_question_bank:
+        #         question = self.interview_session.proposed_question_bank.add_question(content=question_text, 
+        #                                                  subtopic_id=subtopic_id,
+        #                                                  rubric=rubric)
                 
-                # Add question to SessionAgenda
-                adding_status = self.interview_session.session_agenda.add_interview_question(question=question)
-            else:
-                # Add question to SessionAgenda
-                adding_status = self.interview_session.session_agenda.add_interview_question_raw(
-                    subtopic_id=subtopic_id,
-                    question=question_text,
-                    rubric=rubric  # Pass the generated rubric
-                )
+        #         # Add question to SessionAgenda
+        #         adding_status = self.interview_session.session_agenda.add_interview_question(question=question)
+        #     else:
+        #         # Add question to SessionAgenda
+        #         adding_status = self.interview_session.session_agenda.add_interview_question_raw(
+        #             subtopic_id=subtopic_id,
+        #             question=question_text,
+        #             rubric=rubric  # Pass the generated rubric
+        #         )
                 
-            if not adding_status:
-                SessionLogger.log_to_file(
-                    "execution_log",
-                    f"[NOTIFY] SessionAgenda failed/skipped to add question to session agenda.",
-                )
+        #     if not adding_status:
+        #         SessionLogger.log_to_file(
+        #             "execution_log",
+        #             f"[NOTIFY] SessionAgenda failed/skipped to add question to session agenda.",
+        #         )
 
     async def _process_qa_pair(self, interviewer_message: Message, user_message: Message):
         """Process a Q&A pair with task tracking"""

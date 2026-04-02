@@ -372,19 +372,25 @@ def start_session():
 @app.route('/api/submit-rating', methods=['POST'])
 @login_required
 def submit_rating():
-    data             = request.json
-    session_token    = data.get('session_token')
-    message_id       = data.get('message_id')
-    reply_to         = data.get('reply_to', None)
-    rating_cultural  = data.get('rating_cultural', None)
-    rating_fluency   = data.get('rating_fluency', None)
-    rejected_options = data.get('rejected_options', [])
-    topic            = data.get('topic', None)    # ← new
-    country          = data.get('country', None)  # ← new
+    data                 = request.json
+    session_token        = data.get('session_token')
+    message_id           = data.get('message_id')
+    reply_to             = data.get('reply_to', None)
+    rating_cultural      = data.get('rating_cultural', None)
+    rating_fluency       = data.get('rating_fluency', None)
+    rejected_options     = data.get('rejected_options', [])
+    rejected_message_ids = data.get('rejected_message_ids', [])   # ← new
+    topic                = data.get('topic', None)
+    country              = data.get('country', None)
 
     session = get_session(session_token)
     if not session:
         return jsonify({'success': False, 'error': 'Invalid or expired session'}), 400
+
+    # Resolve model names from the session's response map
+    model_map      = getattr(session, '_response_model_map', {})
+    liked_model    = model_map.get(message_id, '')
+    rejected_models = [model_map.get(mid, '') for mid in rejected_message_ids]
 
     system_message = session.get_system_guidance(message_id=message_id)
 
@@ -398,18 +404,17 @@ def submit_rating():
         user_id=session.user_id,
         session_id=session.session_id,
         follow_up=system_message,
-        topic=topic,      # ← new
-        country=country,  # ← new
+        topic=topic,
+        country=country,
+        liked_model=liked_model,           # ← new
+        rejected_models=rejected_models,   # ← new
     )
 
     if getattr(session, '_farewell_done', False):
         session._farewell_rated = True
         system_message = None
 
-    return jsonify({
-        'success':        True,
-        'system_message': system_message,
-    })
+    return jsonify({'success': True, 'system_message': system_message})
 
 @app.route('/api/send-message', methods=['POST'])
 @login_required

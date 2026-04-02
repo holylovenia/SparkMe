@@ -60,6 +60,7 @@
         let openingSelected = false;
         let lastChosenTopic   = null;
         let lastChosenCountry = null;
+        let lastRejectedMessageIds = [];
 
         // ── Rating values from the last submitted rating form
         let lastRatingCultural = null;
@@ -194,16 +195,17 @@
                         const resp = await fetch('/api/submit-rating', {
                             method:  'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body:    JSON.stringify({
-                                session_token:    sessionToken,
-                                message_id:       messageId,
-                                reply_to:         lastLikedMessageText,
-                                rejected_options: lastRejectedOptions,
-                                rating_cultural:  cultural,
-                                rating_fluency:   fluency,
-                                topic:            lastChosenTopic,    // ← new
-                                country:          lastChosenCountry,  // ← new
-                            }),
+                            body: JSON.stringify({
+                            session_token:        sessionToken,
+                            message_id:           messageId,
+                            reply_to:             lastLikedMessageText,
+                            rejected_options:     lastRejectedOptions,
+                            rejected_message_ids: lastRejectedMessageIds,
+                            rating_cultural:      cultural,
+                            rating_fluency:       fluency,
+                            topic:                lastChosenTopic,
+                            country:              lastChosenCountry,
+                        }),
                         });
                         const result = await resp.json();
                         if (result.success && result.system_message) {
@@ -279,12 +281,14 @@
                     const textParagraph = msgDiv.querySelector('p');
                     lastLikedMessageText = textParagraph ? textParagraph.innerText : null;
 
-                    lastRejectedOptions = [];
+                    lastRejectedOptions    = [];
+                    lastRejectedMessageIds = [];
                     document.querySelectorAll('#chat-box .message[data-msg-id]').forEach(el => {
                         const elId = el.dataset.msgId;
                         if (elId !== messageId && elId.startsWith(prefix)) {
                             const siblingText = el.querySelector('p');
                             if (siblingText) lastRejectedOptions.push(siblingText.innerText);
+                            lastRejectedMessageIds.push(elId);   // ← new
                             if (el.querySelector('.like-btn')) pendingLikeCount--;
                             el.remove();
                         }
@@ -309,6 +313,7 @@
                                     message_id:       messageId,
                                     reply_to:         lastLikedMessageText,
                                     rejected_options: lastRejectedOptions,
+                                    rejected_message_ids: lastRejectedMessageIds,
                                     rating_cultural:  null,
                                     rating_fluency:   null,
                                     topic:            lastChosenTopic,    // ← new

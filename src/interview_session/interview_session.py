@@ -97,6 +97,7 @@ class InterviewSession:
         self._follow_up_options = self._get_follow_up_options()
         self._opening_topics = self._get_opening_topics()
         self._countries = self._get_countries()
+        self._response_model_map: Dict[str, str] = {}   # message_id → model_name
 
         # Session agenda setup
         self.session_agenda = SessionAgenda.get_last_session_agenda(self.user_id,
@@ -368,35 +369,32 @@ class InterviewSession:
         return pd.read_csv(data_path)['country'].tolist()
 
     def present_as_options(self, role: str, content: list[str] = [],
-                                    message_type: str = MessageType.OPTION,
-                                    metadata: dict = {}):
+                       message_type: str = MessageType.OPTION,
+                       metadata: dict = {},
+                       model_names: list[str] = []):   # ← new param
         """Present message as options"""
-
-        # Reject messages if session is not in progress
         if not self.session_in_progress:
             return
 
-        options = []
         prefix = str(uuid.uuid4())
 
         for i, c in enumerate(content):
+            message_id = f"{prefix}|{i}"
+
+            # Store model name for this message if provided
+            if i < len(model_names):
+                self._response_model_map[message_id] = model_names[i]
+
             message = Message(
-                id=f"{prefix}|{i}",
+                id=message_id,
                 type=message_type,
                 role=role,
                 content=c,
                 timestamp=datetime.now(),
                 metadata=metadata,
             )
-            options.append(message)
 
-            # save_feedback_to_csv(
-            #     message, self._last_user_message, self.user_id, self.session_id)
-            # self.chat_history.append(message)
-            
-            SessionLogger.log_to_file(
-                "option", f"{role}: {message.content}")
-            # Notify participants
+            SessionLogger.log_to_file("option", f"{role}: {message.content}")
             asyncio.create_task(self._notify_participants(message))
 
     def add_message_to_chat_history(self, role: str, content: str = "", reply_to: str = "",
