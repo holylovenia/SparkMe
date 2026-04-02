@@ -104,6 +104,26 @@ def hash_password(password):
     """Hash password using SHA-256"""
     return hashlib.sha256(password.encode()).hexdigest()
 
+def get_user_sessions_path(user_id: str) -> str:
+    """Get path to user's session list JSON"""
+    data_dir = os.getenv('DATA_DIR', 'data')
+    return os.path.join(data_dir, user_id, 'user_sessions.json')
+
+def load_user_sessions(user_id: str) -> list:
+    """Load session list for a user"""
+    path = get_user_sessions_path(user_id)
+    if not os.path.exists(path):
+        return []
+    with open(path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+def save_user_sessions(user_id: str, sessions: list):
+    """Save session list for a user"""
+    path = get_user_sessions_path(user_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(sessions, f, indent=2)
+
 @login_manager.user_loader
 def load_user(user_id):
     users = load_users()
@@ -163,10 +183,14 @@ active_sessions: Dict[str, SessionWrapper] = {}
 last_messages_by_session: Dict[str, Dict[str, str]] = {}
 session_audio_cache: Dict[str, Dict[str, object]] = {}
 
-def create_interview_session(user_id: str) -> tuple[InterviewSession, str]:
-    """Create interview session with authenticated user_id"""
+def create_interview_session(user_id: str,
+                             sel_session_id: str = None,
+                             country: str = None,
+                             topic: str = None,
+                             n_turns: int = None) -> tuple[InterviewSession, str]:
     session_token = str(uuid.uuid4())
-    
+    effective_max_turns = n_turns if n_turns is not None else config.max_turns
+
     interview_session = InterviewSession(
         interaction_mode='api',
         user_config={
@@ -177,24 +201,28 @@ def create_interview_session(user_id: str) -> tuple[InterviewSession, str]:
         interview_config={
             "enable_voice": False,
             "interview_description": os.getenv(
-                'INTERVIEW_DESCRIPTION', 
+                'INTERVIEW_DESCRIPTION',
                 "Understanding the impact of AI in the workforce"
             ),
             "interview_plan_path": os.getenv('INTERVIEW_PLAN_PATH'),
             "interview_evaluation": os.getenv('COMPLETION_METRIC'),
             "additional_context_path": config.additional_context_path,
             "initial_user_portrait_path": os.getenv('USER_PORTRAIT_PATH'),
+            # Session-selection metadata → stored on the session object
+            "sel_session_id": sel_session_id,
+            "country": country,
+            "topic": topic,
         },
-        max_turns=config.max_turns
+        max_turns=effective_max_turns
     )
-    
+
     wrapper = SessionWrapper(
         session_token=session_token,
         interview_session=interview_session,
         user_id=user_id,
     )
     active_sessions[session_token] = wrapper
-    
+
     session_loop = asyncio.new_event_loop()
     def _start_loop(l):
         asyncio.set_event_loop(l)
@@ -205,7 +233,7 @@ def create_interview_session(user_id: str) -> tuple[InterviewSession, str]:
     wrapper.loop = session_loop
     wrapper.loop_thread = t
     asyncio.run_coroutine_threadsafe(interview_session.run(), session_loop)
-    
+
     return interview_session, session_token
 
 def get_session(session_token: str) -> Optional[InterviewSession]:
@@ -310,39 +338,69 @@ def logout():
 # =============================================================================
 
 @app.route('/')
-@login_required  # MUST BE LOGGED IN TO SEE INSTRUCTIONS
+@login_required
 def index():
-    """Landing page with instructions - shown after login"""
-    return render_template('index.html', username=current_user.username)
+    """Session selection page - shown after login"""
+    return render_template('sessions.html', username=current_user.username)
 
 @app.route('/chat')
-@login_required  # MUST BE LOGGED IN
+@login_required
 def unified_chat():
-    """Unified chat interface"""
-    return render_template('chat.html', username=current_user.username)
+    """Unified chat interface - requires session selection"""
+    session_id = request.args.get('session_id')
+    country = request.args.get('country')
+    topic = request.args.get('topic')
+    n_turns = request.args.get('n_turns')
+
+    if not all([session_id, country, topic, n_turns]):
+        flash('Please select a session first.', 'error')
+        return redirect(url_for('index'))
+
+    return render_template('chat.html',
+                           username=current_user.username,
+                           session_id=session_id,
+                           country=country,
+                           topic=topic,
+                           n_turns=int(n_turns))
 
 # =============================================================================
 # API ENDPOINTS - PROTECTED (REQUIRE LOGIN)
 # All endpoints that handle interview data need @login_required
 # =============================================================================
 
-@app.route('/api/start-session', methods=['POST'])
-@login_required  # PROTECTED
-def start_session():
-    """Initialize a new interview session using authenticated user's ID"""
+@app.route('/api/get-user-sessions', methods=['GET'])
+@login_required
+def get_user_sessions():
+    """Return the list of sessions for the logged-in user"""
     user_id = current_user.id
-    
-    # DEBUG: Log every request
-    call_stack = ''.join(traceback.format_stack()[-3:-1])
-    app.logger.info(f"[DEBUG] start-session called by user {current_user.username}")
-    print(f"[DEBUG] start-session request from {current_user.username} (user_id: {user_id})")
-    
-    # Check if user already has an active session
+    sessions = load_user_sessions(user_id)
+    return jsonify({'success': True, 'sessions': sessions})
+
+@app.route('/api/start-session', methods=['POST'])
+@login_required
+def start_session():
+    """Initialize a new interview session using authenticated user's ID and session params"""
+    user_id = current_user.id
+    data = request.json or {}
+
+    # Session params from the session-selection page
+    sel_session_id = data.get('session_id')
+    sel_country = data.get('country')
+    sel_topic = data.get('topic')
+    sel_n_turns = data.get('n_turns')
+
+    if not all([sel_session_id, sel_country, sel_topic, sel_n_turns]):
+        return jsonify({'success': False, 'error': 'Missing session parameters'}), 400
+
+    sel_n_turns = int(sel_n_turns)
+
+    app.logger.info(f"[DEBUG] start-session called by user {current_user.username} "
+                    f"session_id={sel_session_id} country={sel_country} topic={sel_topic}")
+
+    # Check if user already has an active session for THIS session_id
     for token, wrapper in active_sessions.items():
-        if wrapper.user_id == user_id:
-            # Return existing session instead of creating duplicate
+        if wrapper.user_id == user_id and getattr(wrapper, 'sel_session_id', None) == sel_session_id:
             app.logger.info(f"Returning existing session {token} for user {current_user.username}")
-            print(f"[Session] Reusing existing session {token} for {current_user.username}")
             return jsonify({
                 'success': True,
                 'session_token': token,
@@ -352,12 +410,25 @@ def start_session():
                 'message': 'Using existing session',
                 'was_existing': True
             })
-    
-    # Create new session only if none exists
-    interview_session, session_token = create_interview_session(user_id=user_id)
 
-    app.logger.info(f"Session created: {session_token} | User: {current_user.username} ({user_id})")
-    print(f"[Session] Created NEW session {session_token} for user {current_user.username}")
+    # Create new session with the selected parameters
+    interview_session, session_token = create_interview_session(
+        user_id=user_id,
+        sel_session_id=sel_session_id,
+        country=sel_country,
+        topic=sel_topic,
+        n_turns=sel_n_turns
+    )
+
+    # Store selection metadata on the wrapper for reuse checks
+    wrapper = active_sessions[session_token]
+    wrapper.sel_session_id = sel_session_id
+    wrapper.country = sel_country
+    wrapper.topic = sel_topic
+    wrapper.n_turns = sel_n_turns
+
+    app.logger.info(f"Session created: {session_token} | User: {current_user.username} "
+                    f"| sel_session_id={sel_session_id}")
 
     return jsonify({
         'success': True,
@@ -379,7 +450,7 @@ def submit_rating():
     rating_cultural      = data.get('rating_cultural', None)
     rating_fluency       = data.get('rating_fluency', None)
     rejected_options     = data.get('rejected_options', [])
-    rejected_message_ids = data.get('rejected_message_ids', [])   # ← new
+    rejected_message_ids = data.get('rejected_message_ids', [])
     topic                = data.get('topic', None)
     country              = data.get('country', None)
 
@@ -406,8 +477,11 @@ def submit_rating():
         follow_up=system_message,
         topic=topic,
         country=country,
-        liked_model=liked_model,           # ← new
-        rejected_models=rejected_models,   # ← new
+        liked_model=liked_model,
+        rejected_models=rejected_models,
+        # NEW: pass session-selection metadata for filename
+        sel_session_id=session.sel_session_id,
+        n_turns=session.max_turns,
     )
 
     if getattr(session, '_farewell_done', False):
@@ -698,6 +772,31 @@ def get_voice_response():
         pass  # Will complete async
 
     return ('', 202)  # Tell client to poll again
+
+@app.route('/api/mark-session-completed', methods=['POST'])
+@login_required
+def mark_session_completed():
+    """Mark a user_sessions.json entry as completed"""
+    data = request.json
+    sel_session_id = data.get('session_id')
+    user_id = current_user.id
+
+    if not sel_session_id:
+        return jsonify({'success': False, 'error': 'Missing session_id'}), 400
+
+    sessions = load_user_sessions(user_id)
+    found = False
+    for s in sessions:
+        if s['session_id'] == sel_session_id:
+            s['completed'] = True
+            found = True
+            break
+
+    if not found:
+        return jsonify({'success': False, 'error': 'Session not found'}), 404
+
+    save_user_sessions(user_id, sessions)
+    return jsonify({'success': True, 'message': f'Session {sel_session_id} marked completed'})
 
 @app.route('/api/end-session', methods=['POST'])
 @login_required

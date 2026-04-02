@@ -98,6 +98,10 @@ class InterviewSession:
         self._opening_topics = self._get_opening_topics()
         self._countries = self._get_countries()
         self._response_model_map: Dict[str, str] = {}   # message_id → model_name
+        # After existing init code, add:
+        self.sel_session_id = interview_config.get('sel_session_id', None)
+        self.country = interview_config.get('country', None)
+        self.topic = interview_config.get('topic', None)
 
         # Session agenda setup
         self.session_agenda = SessionAgenda.get_last_session_agenda(self.user_id,
@@ -437,7 +441,11 @@ class InterviewSession:
             self._last_user_message = None
 
         if message_type == MessageType.SKIP or message_type == MessageType.CONVERSATION:
-            save_feedback_to_csv(reply_to, message, self.user_id, self.session_id)
+            save_feedback_to_csv(reply_to, message, self.user_id, self.session_id,
+                     sel_session_id=self.sel_session_id,
+                     country=self.country,
+                     topic=self.topic,
+                     n_turns=self.max_turns)
             self.chat_history.append(message)
             SessionLogger.log_to_file("chat_history", f"{message.role}: {message.content}")
             asyncio.create_task(self._notify_participants(message))

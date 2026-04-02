@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Select Session</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .header {
+            position: absolute; top: 20px; right: 20px;
+            display: flex; align-items: center; gap: 15px;
+        }
+        .username {
+            color: white; font-weight: 500;
+            background: rgba(255,255,255,0.2);
+            padding: 8px 16px; border-radius: 20px;
+        }
+        .logout-button {
+            color: white; text-decoration: none;
+            padding: 8px 16px; border: 2px solid white;
+            border-radius: 20px; font-weight: 500; transition: all 0.3s;
+        }
+        .logout-button:hover { background: white; color: #667eea; }
+        .container {
+            max-width: 700px; width: 100%; padding: 40px;
+            background: white; border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 { color: #333; margin-bottom: 10px; font-size: 28px; text-align: center; }
+        .subtitle { color: #666; text-align: center; margin-bottom: 30px; }
+        .session-list { list-style: none; }
+        .session-item {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 18px 20px; margin-bottom: 12px;
+            border: 2px solid #e1e8ed; border-radius: 10px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .session-item:hover { border-color: #667eea; box-shadow: 0 2px 12px rgba(102,126,234,0.15); }
+        .session-item.completed {
+            background: #f0faf0; border-color: #c3e6c3; opacity: 0.7;
+        }
+        .session-info { flex: 1; }
+        .session-info .id-label { font-weight: 700; color: #333; font-size: 17px; }
+        .session-info .details { color: #666; font-size: 14px; margin-top: 4px; }
+        .session-info .details span { margin-right: 16px; }
+        .badge-completed {
+            background: #4caf50; color: white; font-size: 12px;
+            padding: 4px 12px; border-radius: 12px; font-weight: 600;
+        }
+        .start-btn {
+            padding: 10px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white; border: none; border-radius: 6px;
+            font-size: 15px; font-weight: 600; cursor: pointer;
+            transition: transform 0.15s; text-decoration: none;
+        }
+        .start-btn:hover { transform: translateY(-2px); }
+        .start-btn:disabled, .start-btn.disabled {
+            opacity: 0.4; cursor: not-allowed; transform: none;
+        }
+        .empty-msg { text-align: center; color: #999; padding: 40px 0; }
+        .all-done { text-align: center; color: #4caf50; padding: 20px 0; font-weight: 600; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <span class="username">👤 {{ username }}</span>
+        <a href="/logout" class="logout-button">Logout</a>
+    </div>
+
+    <div class="container">
+        <h1>📋 Your Interview Sessions</h1>
+        <p class="subtitle">Select a session to begin the interview.</p>
+
+        <ul class="session-list" id="session-list">
+            <li class="empty-msg" id="loading-msg">Loading sessions…</li>
+        </ul>
+        <div id="all-done-msg" class="all-done" style="display:none;">
+            🎉 All sessions completed! Thank you for your participation.
+        </div>
+    </div>
+
+    <script>
+        async function loadSessions() {
+            try {
+                const resp = await fetch('/api/get-user-sessions');
+                const data = await resp.json();
+                const list = document.getElementById('session-list');
+                list.innerHTML = '';
+
+                if (!data.success || !data.sessions || data.sessions.length === 0) {
+                    list.innerHTML = '<li class="empty-msg">No sessions assigned yet.</li>';
+                    return;
+                }
+
+                let allDone = true;
+                data.sessions.forEach(s => {
+                    if (!s.completed) allDone = false;
+
+                    const li = document.createElement('li');
+                    li.className = 'session-item' + (s.completed ? ' completed' : '');
+
+                    const chatUrl = `/chat?session_id=${encodeURIComponent(s.session_id)}`
+                        + `&country=${encodeURIComponent(s.country)}`
+                        + `&topic=${encodeURIComponent(s.topic)}`
+                        + `&n_turns=${s.n_turns}`;
+
+                    li.innerHTML = `
+                        <div class="session-info">
+                            <div class="id-label">Session: ${s.session_id}</div>
+                            <div class="details">
+                                <span>🌍 ${s.country}</span>
+                                <span>📌 ${s.topic.replace(/_/g, ' ')}</span>
+                                <span>💬 ${s.n_turns} turns</span>
+                            </div>
+                        </div>
+                        ${s.completed
+                            ? '<span class="badge-completed">✓ Completed</span>'
+                            : '<a href="' + chatUrl + '" class="start-btn">Start →</a>'}
+                    `;
+                    list.appendChild(li);
+                });
+
+                if (allDone) {
+                    document.getElementById('all-done-msg').style.display = 'block';
+                }
+            } catch (e) {
+                console.error('Error loading sessions:', e);
+                document.getElementById('session-list').innerHTML =
+                    '<li class="empty-msg">Error loading sessions.</li>';
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', loadSessions);
+    </script>
+</body>
+</html>

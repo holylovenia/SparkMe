@@ -69,6 +69,12 @@
         // tracks how many bot messages currently have an unsubmitted rating form
         let pendingLikeCount = 0;
 
+        // Session selection metadata (injected by Flask)
+        const selSessionId = '{{ session_id }}';
+        const selCountry   = '{{ country }}';
+        const selTopic     = '{{ topic }}';
+        const selNTurns    = {{ n_turns }};
+
         const MIN_SESSION_DURATION_MS = 45 * 60 * 1000;
 
         // ===================================================================
@@ -405,26 +411,27 @@
         // SESSION INITIALIZATION
         // ===================================================================
         async function initializeSession() {
-            if (isInitializing || sessionToken) {
-                console.log('Session already initializing or exists');
-                return;
-            }
+            if (isInitializing || sessionToken) return;
             isInitializing = true;
 
             try {
                 updateStatus('Initializing session...');
                 const response = await fetch('/api/start-session', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_id: selSessionId,
+                        country:    selCountry,
+                        topic:      selTopic,
+                        n_turns:    selNTurns
+                    })
                 });
                 const data = await response.json();
 
                 if (data.success) {
-                    sessionToken    = data.session_token;
+                    sessionToken     = data.session_token;
                     sessionStartTime = Date.now();
-                    console.log('Session initialized:', sessionToken);
                     updateStatus('Session started. Ready to chat!');
-
                     if (!pollingInterval) {
                         pollingInterval = setInterval(pollForMessages, 1500);
                     }
@@ -432,7 +439,6 @@
                     pollForMessages();
                 } else {
                     updateStatus('Failed to start session: ' + (data.error || 'Unknown error'));
-                    console.error('Failed to start session', data);
                 }
             } catch (e) {
                 updateStatus('Error starting session');
@@ -447,6 +453,19 @@
         // ===================================================================
         async function pollForMessages() {
             if (!sessionToken) return;
+
+            // Add this helper function
+            async function markSessionCompleted() {
+                try {
+                    await fetch('/api/mark-session-completed', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ session_id: selSessionId })
+                    });
+                } catch (e) {
+                    console.error('Error marking session completed:', e);
+                }
+            }
 
             try {
                 const response = await fetch(`/api/get-messages?session_token=${sessionToken}`);
@@ -482,10 +501,11 @@
                     isSessionCompleted = true;
                     updateEndSessionButton();
                     disableChatInputs();
-                    if (pollingInterval) {
-                        clearInterval(pollingInterval);
-                        pollingInterval = null;
-                    }
+                    if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
+                    // Mark completed and show return link
+                    await markSessionCompleted();
+                    document.getElementById('status').innerHTML =
+                        'Session completed! <a href="/" style="color:#667eea;font-weight:600;">← Back to sessions</a>';
                 }
             } catch (error) {
                 console.error('Polling error', error);
