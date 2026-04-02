@@ -45,6 +45,7 @@ class BaseAgent:
                                  config.get("model_name",
                                             os.getenv("MODEL_NAME", "gpt-4.1-mini")),
                                  base_url=config.get("base_url", None))
+
         self.tools = {}
 
         # Each agent has an event stream.
@@ -59,11 +60,11 @@ class BaseAgent:
     def workout(self):
         pass
 
-    def _call_engine(self, prompt: str):
+    def _call_engine(self, engine, prompt: str):
         '''Calls the LLM engine with the given prompt.'''
         for attempt in range(3):
             try:
-                response = invoke_engine(self.engine, prompt)
+                response = invoke_engine(engine, prompt)
 
                 # Track token usage if tracker is available
                 if BaseAgent.token_tracker is not None:
@@ -100,13 +101,13 @@ class BaseAgent:
 
         raise e
     
-    async def call_engine_async(self, prompt: str) -> str:
+    async def call_engine_async(self, engine, prompt: str) -> str:
         '''Asynchronously call the LLM engine with the given prompt.'''
         # Run call_engine in a thread pool since it's a blocking operation
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None,
-            partial(self._call_engine, prompt)
+            partial(self._call_engine, engine, prompt)
         )
         
     def add_event(self, sender: str, tag: str, content: str):

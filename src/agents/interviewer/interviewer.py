@@ -8,6 +8,7 @@ from src.agents.base_agent import BaseAgent
 from src.agents.interviewer.prompts import get_prompt
 from src.agents.interviewer.tools import EndConversation, RespondToUser
 from src.agents.shared.memory_tools import Recall
+from src.utils.llm.engines import get_engine
 from src.utils.llm.prompt_utils import format_prompt
 from src.interview_session.session_models import Participant, Message, MessageType
 from src.utils.llm.xml_formatter import parse_rubric_call
@@ -45,6 +46,21 @@ class Interviewer(BaseAgent, Participant):
         Participant.__init__(
             self, title="Interviewer",
             interview_session=interview_session)
+
+        self.engines = [
+            get_engine(
+                model_name=config.get("model_name_1", os.getenv("MODEL_NAME_1", "lipsum:model-1")), base_url=config.get("base_url", None)
+            ),
+            get_engine(
+                model_name=config.get("model_name_2", os.getenv("MODEL_NAME_2", "lipsum:model-2")), base_url=config.get("base_url", None)
+            ),
+            get_engine(
+                model_name=config.get("model_name_3", os.getenv("MODEL_NAME_3", "lipsum:model-3")), base_url=config.get("base_url", None)
+            ),
+            get_engine(
+                model_name=config.get("model_name_4", os.getenv("MODEL_NAME_4", "lipsum:model-4")), base_url=config.get("base_url", None)
+            ),
+        ]
 
         self.interview_description = config.get("interview_description")
         self.tools = {
@@ -160,7 +176,7 @@ class Interviewer(BaseAgent, Participant):
         while self._turn_to_respond and iterations < self._max_consideration_iterations:
             prompt = self._get_prompt()
             self.add_event(sender=self.name, tag="llm_prompt", content=prompt)
-            response = await self.call_engine_async(prompt)
+            response = await self.call_engine_async(self.engines[iterations], prompt)
             print(f"{GREEN}Interviewer:\n{response}{RESET}")
             # try:
             #     # await self.handle_tool_calls_async(response)
