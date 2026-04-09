@@ -476,7 +476,7 @@ def submit_rating():
         rejected_options=rejected_options,
         user_id=session.user_id,
         session_id=session.session_id,
-        follow_up=system_message,
+        follow_up="",              # ← follow_up only lives on user rows now
         topic=topic,
         country=country,
         liked_model=liked_model,

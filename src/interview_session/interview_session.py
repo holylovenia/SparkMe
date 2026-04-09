@@ -17,7 +17,7 @@ from src.agents.session_scribe.session_scribe import SessionScribe, SessionScrib
 from src.agents.strategic_planner.strategic_planner import StrategicPlanner, StrategicPlannerConfig
 from src.agents.user.user_agent import UserAgent
 from src.content.session_agenda.session_agenda import SessionAgenda
-from src.utils.data_process import save_feedback_to_csv
+from src.utils.data_process import save_rating_to_csv
 from src.utils.logger.session_logger import SessionLogger, setup_logger
 from src.utils.logger.evaluation_logger import EvaluationLogger
 from src.interview_session.user.user import User
@@ -162,6 +162,7 @@ class InterviewSession:
         self._session_ending = False
         self._farewell_done  = False
         self._farewell_rated = False
+        self._last_follow_up = ""
 
         # Report auto-update states
         self.auto_report_update_in_progress = False
@@ -425,9 +426,9 @@ class InterviewSession:
         if rejected_options:
             metadata["rejected_options"] = rejected_options
         if topic is not None:
-            metadata["topic"] = topic       # ← new
+            metadata["topic"] = topic
         if country is not None:
-            metadata["country"] = country   # ← new
+            metadata["country"] = country
 
         message = Message(
             id=str(uuid.uuid4()),
@@ -444,11 +445,29 @@ class InterviewSession:
             self._last_user_message = None
 
         if message_type == MessageType.SKIP or message_type == MessageType.CONVERSATION:
-            save_feedback_to_csv(reply_to, message, self.user_id, self.session_id,
-                     sel_session_id=self.sel_session_id,
-                     country=self.country,
-                     topic=self.topic,
-                     n_turns=self.max_turns)
+            # User messages → write to ratings CSV immediately with last follow-up
+            if role == "User":
+                save_rating_to_csv(
+                    session_token="",
+                    message_id=message.id,
+                    reply_to=content,          # user's text is the "liked_response" column
+                    rating_cultural=None,
+                    rating_fluency=None,
+                    rejected_options=[],
+                    user_id=self.user_id,
+                    session_id=self.session_id,
+                    follow_up=self._last_follow_up,
+                    topic=self.topic,
+                    country=self.country,
+                    liked_model="user",        # signals this row is a user turn
+                    rejected_models=[],
+                    sel_session_id=self.sel_session_id,
+                    n_turns=self.max_turns,
+                )
+                self._last_follow_up = ""      # reset — consumed by this user turn
+
+            # Interviewer messages are recorded via submit_rating when the user likes one
+
             self.chat_history.append(message)
             SessionLogger.log_to_file("chat_history", f"{message.role}: {message.content}")
             asyncio.create_task(self._notify_participants(message))
@@ -461,8 +480,12 @@ class InterviewSession:
     def get_system_guidance(self, message_id: str) -> str | None:
         if not self._first_guidance_given:
             self._first_guidance_given = True
-            return "Please start the conversation with a prompt related to the topic you chose."
-        return f"Consider responding with: {random.sample(self._follow_up_options, 1)[0]}"
+            guidance = "Please start the conversation with a prompt related to the topic you chose."
+        else:
+            guidance = f"Consider responding with: {random.sample(self._follow_up_options, 1)[0]}"
+
+        self._last_follow_up = guidance   # will be read on the next user message
+        return guidance
 
     async def trigger_farewell(self):
         """Deliver one final interviewer turn then mark the session closed."""

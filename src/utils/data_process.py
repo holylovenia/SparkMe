@@ -9,22 +9,23 @@ from src.interview_session.session_models import Message
 
 
 def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
-                       rating_cultural: int, rating_fluency: int,
+                       rating_cultural, rating_fluency,
                        rejected_options: list, user_id: str, session_id: str,
                        follow_up: str = None, topic: str = None, country: str = None,
                        liked_model: str = None, rejected_models: list = None,
-                       sel_session_id: str = None, n_turns: int = None):
-    """Persist like ratings and rejected variants to a dedicated CSV."""
+                       n_turns: int = None, sel_session_id: str = None):
+    """Record a single turn (user or model) to the per-assigned-session CSV."""
 
     ratings_dir = os.path.join(os.getenv("LOGS_DIR", "logs"), user_id, 'ratings')
     os.makedirs(ratings_dir, exist_ok=True)
 
-    # New naming: {session_id}_{country}_{topic}_{n_turns}
-    if all([sel_session_id, country, topic, n_turns]):
-        filename = f'{sel_session_id}_{country}_{topic}_{n_turns}.csv'
-    else:
-        filename = f'session_{session_id}.csv'
+    def _safe(s):
+        return re.sub(r'[^\w\-]', '_', str(s)) if s is not None else 'unknown'
 
+    filename = (
+        f"{_safe(sel_session_id if sel_session_id is not None else session_id)}_"
+        f"{_safe(country)}_{_safe(topic)}_{_safe(n_turns)}.csv"
+    )
     ratings_file = os.path.join(ratings_dir, filename)
 
     if not os.path.exists(ratings_file):
@@ -45,12 +46,12 @@ def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
             reply_to or '',
             rating_cultural if rating_cultural is not None else '',
             rating_fluency  if rating_fluency  is not None else '',
-            rejected_options or '',
+            rejected_options if rejected_options else '',
             follow_up or '',
-            topic   or '',
-            country or '',
+            topic    or '',
+            country  or '',
             liked_model or '',
-            rejected_models or '',
+            rejected_models if rejected_models else '',
         ])
 
 
