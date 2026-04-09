@@ -451,16 +451,18 @@ def submit_rating():
     rating_fluency       = data.get('rating_fluency', None)
     rejected_options     = data.get('rejected_options', [])
     rejected_message_ids = data.get('rejected_message_ids', [])
-    topic                = data.get('topic', None)
-    country              = data.get('country', None)
 
     session = get_session(session_token)
     if not session:
         return jsonify({'success': False, 'error': 'Invalid or expired session'}), 400
 
-    # Resolve model names from the session's response map
-    model_map      = getattr(session, '_response_model_map', {})
-    liked_model    = model_map.get(message_id, '')
+    # Always use the session's own stored topic/country — set at session
+    # creation from user_sessions.json, not from the frontend payload.
+    topic   = getattr(session, 'topic',   None)
+    country = getattr(session, 'country', None)
+
+    model_map       = getattr(session, '_response_model_map', {})
+    liked_model     = model_map.get(message_id, '')
     rejected_models = [model_map.get(mid, '') for mid in rejected_message_ids]
 
     system_message = session.get_system_guidance(message_id=message_id)
@@ -479,7 +481,6 @@ def submit_rating():
         country=country,
         liked_model=liked_model,
         rejected_models=rejected_models,
-        # NEW: pass session-selection metadata for filename
         sel_session_id=session.sel_session_id,
         n_turns=session.max_turns,
     )

@@ -301,41 +301,7 @@
                     });
 
                     likeBtn.remove();
-
-                    if (!openingSelected) {
-                        openingSelected = true;
-
-                        // Parse "{topic} in {country}"
-                        const parts = lastLikedMessageText.split(' in ');
-                        lastChosenTopic   = parts[0] ? parts[0].trim() : null;
-                        lastChosenCountry = parts.slice(1).join(' in ').trim() || null;
-
-                        try {
-                            const resp = await fetch('/api/submit-rating', {
-                                method:  'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body:    JSON.stringify({
-                                    session_token:    sessionToken,
-                                    message_id:       messageId,
-                                    reply_to:         lastLikedMessageText,
-                                    rejected_options: lastRejectedOptions,
-                                    rejected_message_ids: lastRejectedMessageIds,
-                                    rating_cultural:  null,
-                                    rating_fluency:   null,
-                                    topic:            lastChosenTopic,    // ← new
-                                    country:          lastChosenCountry,  // ← new
-                                }),
-                            });
-                            const result = await resp.json();
-                            if (result.success && result.system_message) {
-                                appendSystemMessage(result.system_message);
-                            }
-                        } catch (err) {
-                            console.warn('Opening selection error:', err);
-                        }
-                    } else {
-                        await buildRatingForm(msgDiv, messageId);
-                    }
+                    await buildRatingForm(msgDiv, messageId);
 
                     pendingLikeCount--;
                     refreshLikeLock();
