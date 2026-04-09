@@ -207,99 +207,61 @@ class Interviewer(BaseAgent, Participant):
                 role=self.title,
                 content=responses,
                 message_type=MessageType.CONVERSATION,
-                model_names=model_names,   # ← new
+                model_names=model_names,
             )
+            # Record each response so _get_prompt() sees them on the next turn.
+            # Without this, all_interviewer_messages stays empty and the
+            # introduction prompt fires on every single call.
+            for response in responses:
+                self.add_event(sender=self.name, tag="message", content=response)
+
         except Exception as e:
-            print(f"Error presenting as options: {e}. Falling back to first response.")
+            print(f"Error presenting as options: {e}. Falling back.")
             await self._handle_response(responses[0])
+            # _handle_response already calls add_event internally
 
         self._turn_to_respond = False
 
     def _get_prompt(self):
-        '''Gets the prompt for the interviewer. '''
-        # Get user portrait and last meeting summary from session agenda
-        user_portrait_str = self.interview_session.session_agenda \
-            .get_user_portrait_str()
-        last_meeting_summary_str = (
-            self.interview_session.session_agenda
-            .get_last_meeting_summary_str()
-        )
+    # Gets the prompt for the interviewer — chat history only.
 
-        # Get chat history from event stream where these are the senders
+        topic   = getattr(self.interview_session, 'topic',   'the chosen topic')
+        country = getattr(self.interview_session, 'country', 'the chosen country')
+
+        # Collect all user and interviewer messages in order
         chat_history_events = self.get_event_stream_str(
             [
                 {"sender": "Interviewer", "tag": "message"},
-                {"sender": "User", "tag": "message"},
-                {"sender": "system", "tag": "recall"},
+                {"sender": "User",        "tag": "message"},
             ],
             as_list=True
         )
 
-        recent_events = chat_history_events[-self._max_events_len:] if \
-            len(chat_history_events) > self._max_events_len else chat_history_events
-        current_events = recent_events[-2:] if len(recent_events) >= 2 else recent_events
-
-        all_interviewer_messages = self.get_event_stream_str(
-            [{"sender": "Interviewer", "tag": "message"}],
-            as_list=True
+        recent_events = (
+            chat_history_events[-self._max_events_len:]
+            if len(chat_history_events) > self._max_events_len
+            else chat_history_events
         )
-        recent_interviewer_messages = all_interviewer_messages[-5:] if \
-            len(all_interviewer_messages) >= 5 else all_interviewer_messages
 
-        # Start with all available tools
-        tools_set = set(self.tools.keys())
-        
-        # if self.interview_session.api_participant:
-        #     # Don't end_conversation directly if API participant is present
-        #     tools_set.discard("end_conversation")
-        
-        if self.use_baseline:
-            # For baseline mode, remove recall tool
-            tools_set.discard("recall")
+        chat_history_str = '\n'.join(recent_events) if recent_events else "No messages yet."
 
-        # Create format parameters based on prompt type
-        format_params = {
-            "user_portrait": user_portrait_str,
-            "interview_description": self.interview_description,
-            "last_meeting_summary": last_meeting_summary_str,
-            "chat_history": '\n'.join(recent_events),
-            "current_events": '\n'.join(current_events),
-            "recent_interviewer_messages": '\n'.join(
-                [msg for msg in recent_interviewer_messages]),
-            "tool_descriptions": self.get_tools_description(list(tools_set))
-        }
+        is_first_turn = not any(
+            e.startswith('<Interviewer>') for e in chat_history_events
+        )
 
-        # Only add questions_and_notes for normal mode
-        if not self.use_baseline:
-            questions_and_notes_str = self.interview_session.session_agenda \
-                .get_questions_and_notes_str(
-                    hide_answered="all", active_topics_only=True
-                )
-            format_params["questions_and_notes"] = questions_and_notes_str
+        instruction = (
+            f"You are conducting an interview about \"{topic}\" "
+            f"with a participant that is interested about {country}. "
+            f"Based on the conversation so far, give a natural response "
+            f"that might deepens their understanding of \"{topic}\" in {country}."
+        )
 
-            # # Get strategic question suggestions from StrategicPlanner (only if not stale)
-            # # Staleness is checked before formatting to avoid unnecessary work
-            # if self._should_include_strategic_questions():
-            #     strategic_questions_str = self._format_strategic_questions()
-            #     format_params["strategic_questions"] = strategic_questions_str
-
-        # Use the baseline prompt if enabled
-        if len(all_interviewer_messages) == 0 and len(last_meeting_summary_str) == 0:
-            main_prompt = get_prompt("introduction")
-        elif len(all_interviewer_messages) == 0:
-            main_prompt = get_prompt("introduction_continue_session")
-        elif self.use_baseline:
-            main_prompt = get_prompt("baseline")
-        else:
-            main_prompt = get_prompt("normal")
-
-            # # Remove STRATEGIC_QUESTIONS section from template if stale
-            # if not self.use_baseline and not self._should_include_strategic_questions():
-            #     # Remove the {STRATEGIC_QUESTIONS} line to exclude the section entirely
-            #     main_prompt = main_prompt.replace("\n{STRATEGIC_QUESTIONS}\n", "\n")
-            #     # Don't provide strategic_questions key in format_params (already omitted above)
-
-        return format_prompt(main_prompt, format_params)
+        return (
+            f"{instruction}\n\n"
+            f"<conversation_history>\n{chat_history_str}\n</conversation_history>\n\n"
+            f"Respond with only your next interview message, "
+            f"without any preamble or tags."
+        )
 
     # def _format_strategic_questions(self) -> str:
     #     """

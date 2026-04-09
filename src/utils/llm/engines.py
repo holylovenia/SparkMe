@@ -10,7 +10,8 @@ from src.utils.llm.models.deepseek import DeepSeekEngine, deepseek_models
 from src.utils.llm.models.vllm import VLLMEngine
 
 from src.utils.llm.models.lipsum import LipsumEngine
-
+from src.utils.llm.models.jais import JaisEngine
+from src.utils.llm.models.gpt4o_mini_proxy import GPT4OMiniProxyEngine
 
 
 engine_constructor = {
@@ -84,6 +85,16 @@ def get_engine(model_name, **kwargs):
         actual_model_name = model_name[5:]  # Remove "vllm:" prefix
         kwargs["max_tokens"] = token_limit
         return VLLMEngine(model_name=actual_model_name, **kwargs)
+
+    # Handle JAIS 2 model (identified by jais: prefix or exact model name)
+    if model_name.startswith("jais:") or model_name == "Jais-2-70B-Chat":
+        kwargs["max_tokens"] = token_limit
+        return JaisEngine(**kwargs)
+
+    # Handle gpt-4o-mini proxy (identified by gpt4o-mini-proxy: prefix)
+    if model_name.startswith("gpt4o-mini-proxy:"):
+        kwargs["max_tokens"] = token_limit
+        return GPT4OMiniProxyEngine(**kwargs)
 
     # Handle Lipsum random generators (identified by lipsum: prefix)
     if model_name.startswith("lipsum:"):
