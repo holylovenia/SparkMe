@@ -103,6 +103,11 @@ class InterviewSession:
         self.country = interview_config.get('country', None)
         self.topic = interview_config.get('topic', None)
 
+        # Skip opening picker and first guidance when session is pre-assigned
+        is_preassigned = self.topic is not None and self.country is not None
+        self._opening_presented    = is_preassigned
+        self._first_guidance_given = is_preassigned
+
         # Session agenda setup
         self.session_agenda = SessionAgenda.get_last_session_agenda(self.user_id,
                                                                     initial_user_portrait_path=interview_config.get('initial_user_portrait_path'),
@@ -154,8 +159,6 @@ class InterviewSession:
         self.session_completed = False
         self._session_timeout = False
         self.max_turns = max_turns
-        self._opening_presented = False
-        self._first_guidance_given = False
         self._session_ending = False
         self._farewell_done  = False
         self._farewell_rated = False
@@ -459,7 +462,6 @@ class InterviewSession:
         if not self._first_guidance_given:
             self._first_guidance_given = True
             return "Please start the conversation with a prompt related to the topic you chose."
-
         return f"Consider responding with: {random.sample(self._follow_up_options, 1)[0]}"
 
     async def trigger_farewell(self):
@@ -480,7 +482,6 @@ class InterviewSession:
             SessionLogger.log_to_file("execution_log", "[FAREWELL] Session closed after farewell.")
 
     async def run(self):
-        """Run the interview session"""
         await self.session_scribe.augment_session_agenda(
             additional_context_path=self._initial_additional_context_path)
 
@@ -489,24 +490,24 @@ class InterviewSession:
 
         try:
             if self.user is not None:
-                # Present opening options instead of invoking the interviewer directly.
-                # The interviewer will respond naturally once the user picks one.
-                self._opening_presented = True
-                topics    = random.sample(self._opening_topics, 4)
-                countries = random.sample(self._countries, 4)
-                options   = [f"{topic} in {country}" for topic, country in zip(topics, countries)]
-                self.present_as_options(role="Interviewer", content=options)
-                await asyncio.sleep(0)
+                if self.topic is not None and self.country is not None:
+                    # Pre-assigned session: do nothing — wait for the user to speak first
+                    pass
+                else:
+                    # No predetermined topic: show the random topic+country picker
+                    topics    = random.sample(self._opening_topics, 4)
+                    countries = random.sample(self._countries, 4)
+                    options   = [f"{t} in {c}" for t, c in zip(topics, countries)]
+                    self.present_as_options(role="Interviewer", content=options)
+                    await asyncio.sleep(0)
 
             while self.session_in_progress or self.session_scribe.processing_in_progress:
                 await asyncio.sleep(0.1)
-
                 if datetime.now() - self._last_message_time \
                         > timedelta(minutes=self.timeout_minutes):
                     SessionLogger.log_to_file(
                         "execution_log",
-                        f"[TIMEOUT] Session timed out after "
-                        f"{self.timeout_minutes} minutes of inactivity"
+                        f"[TIMEOUT] Session timed out after {self.timeout_minutes} minutes"
                     )
                     self.session_in_progress = False
                     self._session_timeout = True

@@ -500,8 +500,8 @@ def send_message():
     rating_cultural  = data.get('rating_cultural', None)
     rating_fluency   = data.get('rating_fluency', None)
     rejected_options = data.get('rejected_options', [])
-    topic            = data.get('topic', None)    # ← new
-    country          = data.get('country', None)  # ← new
+    topic            = data.get('topic', None)
+    country          = data.get('country', None)
 
     session = get_session(session_token)
     if not session:
@@ -523,9 +523,10 @@ def send_message():
             topic, country
         )
 
-    if not getattr(session, '_session_ending', False):
-        wait_for_agent_response(session)
-
+    # The interviewer responds asynchronously — its messages land in the
+    # user's _message_buffer and are picked up by the frontend's polling
+    # via /api/get-messages. Calling wait_for_agent_response here would
+    # drain the buffer via get_and_clear_messages before polling sees it.
     return jsonify({'success': True, 'message': 'Message sent successfully'})
 
 @app.route('/api/send-voice', methods=['POST'])
