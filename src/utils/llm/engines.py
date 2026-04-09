@@ -12,6 +12,9 @@ from src.utils.llm.models.vllm import VLLMEngine
 from src.utils.llm.models.lipsum import LipsumEngine
 from src.utils.llm.models.jais import JaisEngine
 from src.utils.llm.models.gpt4o_mini_proxy import GPT4OMiniProxyEngine
+from src.utils.llm.models.cohere_openrouter import CohereOpenRouterEngine
+from src.utils.llm.models.gemini_api import GeminiAPIEngine
+from src.utils.llm.models.fanar import FanarEngine
 
 
 engine_constructor = {
@@ -68,6 +71,12 @@ def get_engine(model_name, **kwargs):
     if model_name in claude_vertex_model_mapping or "claude" in model_name:
         kwargs["max_tokens_to_sample"] = token_limit
         return ClaudeVertexEngine(model_name=model_name, **kwargs)
+
+    # Handle Gemini via direct API key (identified by gemini-api: prefix)
+    if model_name.startswith("gemini-api:"):
+        actual_model_name = model_name[len("gemini-api:"):]
+        kwargs["max_tokens"] = token_limit
+        return GeminiAPIEngine(model_name=actual_model_name, **kwargs)
     
     # Handle Gemini models via Vertex AI
     if model_name in gemini_models or "gemini" in model_name:
@@ -95,6 +104,17 @@ def get_engine(model_name, **kwargs):
     if model_name.startswith("gpt4o-mini-proxy:"):
         kwargs["max_tokens"] = token_limit
         return GPT4OMiniProxyEngine(**kwargs)
+
+    # Handle Cohere via OpenRouter (identified by cohere-openrouter: prefix)
+    if model_name.startswith("cohere-openrouter:"):
+        kwargs["max_tokens"] = token_limit
+        return CohereOpenRouterEngine(**kwargs)
+
+    # Handle Fanar models (identified by fanar: prefix)
+    if model_name.startswith("fanar:"):
+        actual_model_name = model_name[len("fanar:"):]
+        kwargs["max_tokens"] = token_limit
+        return FanarEngine(model_name=actual_model_name, **kwargs)
 
     # Handle Lipsum random generators (identified by lipsum: prefix)
     if model_name.startswith("lipsum:"):
