@@ -48,6 +48,7 @@
         let pendingLikeCount    = 0;
         let assignedSessionId   = null;
         let assignedNTurns      = null;
+        let waitingForResponse = false;
 
         // ===================================================================
         // UTILITY FUNCTIONS
@@ -275,19 +276,29 @@
                 }
 
                 const data = await response.json();
+
                 if (data.success && data.messages && data.messages.length > 0) {
+                    let hadNewBotMessage = false;
+
                     data.messages.forEach(msg => {
                         if (msg.role === 'Interviewer' || msg.role === 'assistant') {
-                            appendMessage('bot', msg.content, msg.id);
+                            const wasNew = appendMessage('bot', msg.content, msg.id);
+                            if (wasNew) hadNewBotMessage = true;
                         } else if (msg.role === 'User' || msg.role === 'user') {
                             appendMessage('user', msg.content, msg.id);
                         } else if (msg.role === 'System' || msg.role === 'system') {
                             appendMessage('system', msg.content, msg.id);
                         }
                     });
+
+                    // Hide the indicator only when a genuinely new bot message arrives
+                    if (hadNewBotMessage && waitingForResponse) {
+                        hideTypingIndicator();
+                    }
                 }
 
                 if (data.session_completed) {
+                    hideTypingIndicator();
                     updateStatus('Session completed');
                     isSessionCompleted = true;
                     disableChatInputs();
@@ -320,6 +331,7 @@
 
             input.value = '';
             appendMessage('user', text, 'user-' + Date.now());
+            showTypingIndicator();
 
             try {
                 const response = await fetch('/api/send-message', {
@@ -353,6 +365,49 @@
                 document.getElementById('chat-form').dispatchEvent(new Event('submit'));
             }
         });
+
+        function showTypingIndicator() {
+            waitingForResponse = true;
+
+            // Remove any stale indicator first
+            const stale = document.getElementById('typing-indicator');
+            if (stale) stale.remove();
+
+            const chatBox = document.getElementById('chat-box');
+            const div = document.createElement('div');
+            div.id = 'typing-indicator';
+            div.className = 'typing-indicator';
+            div.innerHTML = `
+                <img src="https://uploads-ssl.webflow.com/64e02bd14ada8a57fa327cbe/64e445ced8cf185ffb9bb1b9_Rex%20Small_.png" alt="assistant">
+                <div class="typing-dots"><span></span><span></span><span></span></div>
+            `;
+            chatBox.appendChild(div);
+            scrollToBottom();
+
+            // Lock inputs while waiting
+            const input   = document.getElementById('chat-input');
+            const sendBtn = document.querySelector('#chat-form button[type="submit"]');
+            input.disabled    = true;
+            sendBtn.disabled  = true;
+            input.placeholder = 'Waiting for response…';
+        }
+
+        function hideTypingIndicator() {
+            waitingForResponse = false;
+
+            const el = document.getElementById('typing-indicator');
+            if (el) el.remove();
+
+            // Only unlock if no other lock is active
+            if (!isSessionCompleted && pendingLikeCount === 0) {
+                const input   = document.getElementById('chat-input');
+                const sendBtn = document.querySelector('#chat-form button[type="submit"]');
+                input.disabled    = false;
+                sendBtn.disabled  = false;
+                input.placeholder = 'Type your message...';
+                input.classList.remove('awaiting-like');
+            }
+        }
 
         // ===================================================================
         // INITIALIZATION
