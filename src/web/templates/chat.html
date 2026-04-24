@@ -7,24 +7,13 @@
 </head>
 <body>
     <div class="chat-container">
-        <h2>AI Interview Assistant</h2>
-        
         <div class="instructions-panel" id="instructions-panel">
             <h3>📋 Interview Instructions</h3>
             <ul>
-                <li><strong>Text Mode:</strong> Type your responses in the text box below</li>
-                <li><strong>Voice Mode:</strong> Click "Start Recording" to speak your answer</li>
-                <li><strong>TTS:</strong> Toggle voice responses on/off using the switch</li>
-                <li><strong>Tips:</strong> Speak clearly and in a quiet environment for best results</li>
+                <li><strong>Type</strong> your responses in the text box below</li>
+                <li>Start a cultural conversation about <strong>{{topic}} in {{country}}</strong></li>
+                <li>Continue until you are informed that the session has ended</li>
             </ul>
-        </div>
-
-        <div class="control-panel">            
-            <div class="toggle-switch">
-                <input type="checkbox" id="tts-toggle" checked>
-                <label for="tts-toggle">🔊 Voice Responses</label>
-            </div>
-            <button id="end-session-btn" disabled style="opacity: 0.5; cursor: not-allowed;">🚪 End Session</button>
         </div>
 
         <div id="status"></div>
@@ -35,7 +24,6 @@
 
         <form id="chat-form">
             <textarea id="chat-input" placeholder="Type your message..." required></textarea>
-            <button type="button" id="record-toggle" class="chat-mic"></button>
             <button type="submit" class="chat-send">➤</button>
         </form>
     </div>
@@ -44,38 +32,22 @@
         // ===================================================================
         // STATE VARIABLES
         // ===================================================================
-        let sessionToken = null;
-        let sessionStartTime = null;
-        let isRecording = false;
-        let mediaRecorder = null;
-        let audioChunks = [];
-        let seenMessageIds = new Set();
-        let currentAudio = null;
-        let ttsEnabled = true;
-        let isSessionCompleted = false;
-        let pollingInterval = null;
-        let isInitializing = false;
-        let lastLikedMessageText = null;
-        let lastRejectedOptions = [];
-        let openingSelected = false;
-        let lastChosenTopic   = null;
-        let lastChosenCountry = null;
-        let lastRejectedMessageIds = [];
-
-        // ── Rating values from the last submitted rating form
-        let lastRatingCultural = null;
-        let lastRatingFluency  = null;
-
-        // tracks how many bot messages currently have an unsubmitted rating form
-        let pendingLikeCount = 0;
-
-        // Session selection metadata (injected by Flask)
-        const selSessionId = '{{ session_id }}';
-        const selCountry   = '{{ country }}';
-        const selTopic     = '{{ topic }}';
-        const selNTurns    = {{ n_turns }};
-
-        const MIN_SESSION_DURATION_MS = 45 * 60 * 1000;
+        let sessionToken        = null;
+        let sessionStartTime    = null;
+        let seenMessageIds      = new Set();
+        let isSessionCompleted  = false;
+        let pollingInterval     = null;
+        let lastLikedMessageText    = null;
+        let lastRejectedOptions     = [];
+        let lastRejectedMessageIds  = [];
+        let openingSelected     = true;   // always true — no opening picker in assigned sessions
+        let lastChosenTopic     = null;
+        let lastChosenCountry   = null;
+        let lastRatingCultural  = null;
+        let lastRatingFluency   = null;
+        let pendingLikeCount    = 0;
+        let assignedSessionId   = null;
+        let assignedNTurns      = null;
 
         // ===================================================================
         // UTILITY FUNCTIONS
@@ -91,15 +63,10 @@
 
         function setChatInputsLocked(locked, reason) {
             if (isSessionCompleted) return;
-
             const input   = document.getElementById('chat-input');
             const sendBtn = document.querySelector('#chat-form button[type="submit"]');
-            const micBtn  = document.getElementById('record-toggle');
-
             input.disabled   = locked;
             sendBtn.disabled = locked;
-            micBtn.disabled  = locked;
-
             if (locked) {
                 input.classList.add('awaiting-like');
                 input.placeholder = reason || '⭐ Rate the response above before continuing…';
@@ -116,67 +83,50 @@
         function disableChatInputs() {
             const input   = document.getElementById('chat-input');
             const sendBtn = document.querySelector('#chat-form button[type="submit"]');
-            const micBtn  = document.getElementById('record-toggle');
-
-            input.disabled        = true;
-            input.placeholder     = "Session has ended";
-            sendBtn.disabled      = true;
-            micBtn.disabled       = true;
+            input.disabled    = true;
+            input.placeholder = "Session has ended";
+            sendBtn.disabled  = true;
             input.classList.remove('awaiting-like');
-
             document.querySelector('.chat-container').classList.add('session-ended');
-            document.getElementById('chat-form').onsubmit = function(e) {
-                e.preventDefault();
-                return false;
-            };
+            document.getElementById('chat-form').onsubmit = e => { e.preventDefault(); return false; };
         }
 
         // ===================================================================
         // RATING FORM BUILDER
         // ===================================================================
-        /**
-         * Builds and appends the rating form inside msgDiv, after the like button
-         * is removed. Resolves once the user submits valid ratings.
-         */
         function buildRatingForm(msgDiv, messageId) {
             return new Promise((resolve) => {
                 const uid = messageId.replace(/[^a-zA-Z0-9]/g, '_');
-
                 const form = document.createElement('div');
                 form.className = 'rating-form';
                 form.innerHTML = `
                     <p>Rate this response</p>
-
                     <div class="rating-row">
                         <label>Cultural correctness</label>
                         <div class="star-group" id="cultural-stars-${uid}">
-                            <input type="radio" name="cultural_${uid}" id="c5_${uid}" value="5"><label for="c5_${uid}" title="5">★</label>
-                            <input type="radio" name="cultural_${uid}" id="c4_${uid}" value="4"><label for="c4_${uid}" title="4">★</label>
-                            <input type="radio" name="cultural_${uid}" id="c3_${uid}" value="3"><label for="c3_${uid}" title="3">★</label>
-                            <input type="radio" name="cultural_${uid}" id="c2_${uid}" value="2"><label for="c2_${uid}" title="2">★</label>
-                            <input type="radio" name="cultural_${uid}" id="c1_${uid}" value="1"><label for="c1_${uid}" title="1">★</label>
+                            <input type="radio" name="cultural_${uid}" id="c5_${uid}" value="5"><label for="c5_${uid}">★</label>
+                            <input type="radio" name="cultural_${uid}" id="c4_${uid}" value="4"><label for="c4_${uid}">★</label>
+                            <input type="radio" name="cultural_${uid}" id="c3_${uid}" value="3"><label for="c3_${uid}">★</label>
+                            <input type="radio" name="cultural_${uid}" id="c2_${uid}" value="2"><label for="c2_${uid}">★</label>
+                            <input type="radio" name="cultural_${uid}" id="c1_${uid}" value="1"><label for="c1_${uid}">★</label>
                         </div>
                     </div>
-
                     <div class="rating-row">
                         <label>Fluency</label>
                         <div class="star-group" id="fluency-stars-${uid}">
-                            <input type="radio" name="fluency_${uid}" id="f5_${uid}" value="5"><label for="f5_${uid}" title="5">★</label>
-                            <input type="radio" name="fluency_${uid}" id="f4_${uid}" value="4"><label for="f4_${uid}" title="4">★</label>
-                            <input type="radio" name="fluency_${uid}" id="f3_${uid}" value="3"><label for="f3_${uid}" title="3">★</label>
-                            <input type="radio" name="fluency_${uid}" id="f2_${uid}" value="2"><label for="f2_${uid}" title="2">★</label>
-                            <input type="radio" name="fluency_${uid}" id="f1_${uid}" value="1"><label for="f1_${uid}" title="1">★</label>
+                            <input type="radio" name="fluency_${uid}" id="f5_${uid}" value="5"><label for="f5_${uid}">★</label>
+                            <input type="radio" name="fluency_${uid}" id="f4_${uid}" value="4"><label for="f4_${uid}">★</label>
+                            <input type="radio" name="fluency_${uid}" id="f3_${uid}" value="3"><label for="f3_${uid}">★</label>
+                            <input type="radio" name="fluency_${uid}" id="f2_${uid}" value="2"><label for="f2_${uid}">★</label>
+                            <input type="radio" name="fluency_${uid}" id="f1_${uid}" value="1"><label for="f1_${uid}">★</label>
                         </div>
                     </div>
-
                     <button class="rating-submit-btn" type="button" disabled>Submit rating</button>
                 `;
-
                 msgDiv.appendChild(form);
                 scrollToBottom();
 
                 const submitBtn = form.querySelector('.rating-submit-btn');
-
                 function checkReady() {
                     const hasCultural = form.querySelector(`input[name="cultural_${uid}"]:checked`);
                     const hasFluency  = form.querySelector(`input[name="fluency_${uid}"]:checked`);
@@ -187,12 +137,8 @@
                 submitBtn.addEventListener('click', async () => {
                     const cultural = parseInt(form.querySelector(`input[name="cultural_${uid}"]:checked`).value, 10);
                     const fluency  = parseInt(form.querySelector(`input[name="fluency_${uid}"]:checked`).value, 10);
-
-                    // Persist for send-message
                     lastRatingCultural = cultural;
                     lastRatingFluency  = fluency;
-
-                    // Disable form while awaiting backend response
                     submitBtn.disabled = true;
                     submitBtn.textContent = 'Submitting…';
 
@@ -202,33 +148,23 @@
                             method:  'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
-                            session_token:        sessionToken,
-                            message_id:           messageId,
-                            reply_to:             lastLikedMessageText,
-                            rejected_options:     lastRejectedOptions,
-                            rejected_message_ids: lastRejectedMessageIds,
-                            rating_cultural:      cultural,
-                            rating_fluency:       fluency,
-                            topic:                lastChosenTopic,
-                            country:              lastChosenCountry,
-                        }),
+                                session_token:        sessionToken,
+                                message_id:           messageId,
+                                reply_to:             lastLikedMessageText,
+                                rejected_options:     lastRejectedOptions,
+                                rejected_message_ids: lastRejectedMessageIds,
+                                rating_cultural:      cultural,
+                                rating_fluency:       fluency,
+                            }),
                         });
                         const result = await resp.json();
-                        if (result.success && result.system_message) {
-                            systemMessage = result.system_message;
-                        }
+                        if (result.success && result.system_message) systemMessage = result.system_message;
                     } catch (err) {
                         console.warn('Rating submission error:', err);
                     }
 
-                    // Replace the form with a confirmation badge
                     form.innerHTML = `<span class="rating-done-badge">✓ Rated — cultural: ${cultural}/5 · fluency: ${fluency}/5</span>`;
-
-                    // Inject the system message directly below the rated bubble
-                    if (systemMessage) {
-                        appendSystemMessage(systemMessage);
-                    }
-
+                    if (systemMessage) appendSystemMessage(systemMessage);
                     resolve({ cultural, fluency });
                 });
             });
@@ -238,16 +174,12 @@
         // MESSAGE RENDERING
         // ===================================================================
         function appendMessage(role, text, messageId) {
-            if (messageId && seenMessageIds.has(messageId)) {
-                return false;
-            }
-            if (messageId) {
-                seenMessageIds.add(messageId);
-            }
+            if (messageId && seenMessageIds.has(messageId)) return false;
+            if (messageId) seenMessageIds.add(messageId);
 
-            const chatBox = document.getElementById('chat-box');
+            const chatBox   = document.getElementById('chat-box');
             const className = role;
-            const imgUrl = (role === 'user' || role === 'User')
+            const imgUrl    = (role === 'user' || role === 'User')
                 ? "https://e7.pngegg.com/pngimages/178/595/png-clipart-user-profile-computer-icons-login-user-avatars-monochrome-black-thumbnail.png"
                 : "https://uploads-ssl.webflow.com/64e02bd14ada8a57fa327cbe/64e445ced8cf185ffb9bb1b9_Rex%20Small_.png";
 
@@ -261,13 +193,8 @@
                 const msgDiv = document.createElement('div');
                 msgDiv.className = 'message system';
                 msgDiv.dataset.msgId = messageId || '';
-                msgDiv.innerHTML = `
-                    <span class="system-icon">💡</span>
-                    <span>${text.replace(/\n/g, '<br>')}</span>
-                `;
+                msgDiv.innerHTML = `<span class="system-icon">💡</span><span>${text.replace(/\n/g, '<br>')}</span>`;
                 chatBox.appendChild(msgDiv);
-                scrollToBottom();
-                return true;
             } else {
                 const msgDiv = document.createElement('div');
                 msgDiv.className = `message ${className}`;
@@ -283,18 +210,17 @@
                 const likeBtn = msgDiv.querySelector('.like-btn');
                 likeBtn.addEventListener('click', async () => {
                     const prefix = messageId.substring(0, messageId.lastIndexOf('|'));
-
                     const textParagraph = msgDiv.querySelector('p');
-                    lastLikedMessageText = textParagraph ? textParagraph.innerText : null;
-
+                    lastLikedMessageText   = textParagraph ? textParagraph.innerText : null;
                     lastRejectedOptions    = [];
                     lastRejectedMessageIds = [];
+
                     document.querySelectorAll('#chat-box .message[data-msg-id]').forEach(el => {
                         const elId = el.dataset.msgId;
                         if (elId !== messageId && elId.startsWith(prefix)) {
                             const siblingText = el.querySelector('p');
                             if (siblingText) lastRejectedOptions.push(siblingText.innerText);
-                            lastRejectedMessageIds.push(elId);   // ← new
+                            lastRejectedMessageIds.push(elId);
                             if (el.querySelector('.like-btn')) pendingLikeCount--;
                             el.remove();
                         }
@@ -302,7 +228,6 @@
 
                     likeBtn.remove();
                     await buildRatingForm(msgDiv, messageId);
-
                     pendingLikeCount--;
                     refreshLikeLock();
                 });
@@ -318,127 +243,31 @@
             const chatBox = document.getElementById('chat-box');
             const div = document.createElement('div');
             div.className = 'message system';
-            div.innerHTML = `
-                <span class="system-icon">💡</span>
-                <span>${text.replace(/\n/g, '<br>')}</span>
-            `;
+            div.innerHTML = `<span class="system-icon">💡</span><span>${text.replace(/\n/g, '<br>')}</span>`;
             chatBox.appendChild(div);
             scrollToBottom();
-        }
-
-        function stopCurrentAudio() {
-            if (currentAudio) {
-                currentAudio.pause();
-                currentAudio.currentTime = 0;
-                currentAudio = null;
-                updateStatus('');
-            }
-        }
-
-        // ===================================================================
-        // AUDIO PLAYBACK
-        // ===================================================================
-        async function playMessageAudio(messageId, retries = 5) {
-            if (!messageId || !ttsEnabled) return;
-
-            for (let i = 0; i < retries; i++) {
-                try {
-                    const response = await fetch(`/api/get-voice-response?session_token=${sessionToken}&message_id=${messageId}`);
-                    
-                    if (response.status === 202) {
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                        continue;
-                    }
-                    if (!response.ok) {
-                        console.warn(`TTS fetch failed: ${response.status}`);
-                        return;
-                    }
-
-                    const blob     = await response.blob();
-                    const audioUrl = URL.createObjectURL(blob);
-                    stopCurrentAudio();
-
-                    currentAudio = new Audio(audioUrl);
-                    currentAudio.onended = () => {
-                        URL.revokeObjectURL(audioUrl);
-                        currentAudio = null;
-                        updateStatus('');
-                    };
-                    currentAudio.onplay = () => updateStatus('🔊 Playing response...');
-                    await currentAudio.play();
-                    return;
-                } catch (error) {
-                    console.warn(`TTS attempt ${i + 1} failed:`, error);
-                }
-            }
-        }
-
-        // ===================================================================
-        // SESSION INITIALIZATION
-        // ===================================================================
-        async function initializeSession() {
-            if (isInitializing || sessionToken) return;
-            isInitializing = true;
-
-            try {
-                updateStatus('Initializing session...');
-                const response = await fetch('/api/start-session', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        session_id: selSessionId,
-                        country:    selCountry,
-                        topic:      selTopic,
-                        n_turns:    selNTurns
-                    })
-                });
-                const data = await response.json();
-
-                if (data.success) {
-                    sessionToken     = data.session_token;
-                    sessionStartTime = Date.now();
-                    updateStatus('Session started. Ready to chat!');
-                    if (!pollingInterval) {
-                        pollingInterval = setInterval(pollForMessages, 1500);
-                    }
-                    setInterval(updateEndSessionButton, 1000);
-                    pollForMessages();
-                } else {
-                    updateStatus('Failed to start session: ' + (data.error || 'Unknown error'));
-                }
-            } catch (e) {
-                updateStatus('Error starting session');
-                console.error('Error starting session', e);
-            } finally {
-                isInitializing = false;
-            }
         }
 
         // ===================================================================
         // MESSAGE POLLING
         // ===================================================================
+        async function markSessionCompleted() {
+            try {
+                await fetch('/api/mark-session-completed', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify({ session_id: assignedSessionId })
+                });
+            } catch (e) {
+                console.error('Error marking session completed:', e);
+            }
+        }
+
         async function pollForMessages() {
             if (!sessionToken) return;
-
-            // Add this helper function
-            async function markSessionCompleted() {
-                try {
-                    await fetch('/api/mark-session-completed', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ session_id: selSessionId })
-                    });
-                } catch (e) {
-                    console.error('Error marking session completed:', e);
-                }
-            }
-
             try {
                 const response = await fetch(`/api/get-messages?session_token=${sessionToken}`);
-
                 if (response.status === 400) {
-                    const err = await response.json();
-                    console.warn('Session invalid:', err);
                     sessionToken = null;
                     clearInterval(pollingInterval);
                     pollingInterval = null;
@@ -446,18 +275,14 @@
                 }
 
                 const data = await response.json();
-
                 if (data.success && data.messages && data.messages.length > 0) {
                     data.messages.forEach(msg => {
                         if (msg.role === 'Interviewer' || msg.role === 'assistant') {
-                            const wasNew = appendMessage('bot', msg.content, msg.id);
-                            if (wasNew && msg.id) playMessageAudio(msg.id);
+                            appendMessage('bot', msg.content, msg.id);
                         } else if (msg.role === 'User' || msg.role === 'user') {
                             appendMessage('user', msg.content, msg.id);
-                        } else if (msg.role === 'Option' || msg.role === 'option') {
-                            appendMessage('option', msg.content, msg.id);
                         } else if (msg.role === 'System' || msg.role === 'system') {
-                            const wasNew = appendMessage('system', msg.content, msg.id);  // dedup-safe
+                            appendMessage('system', msg.content, msg.id);
                         }
                     });
                 }
@@ -465,13 +290,11 @@
                 if (data.session_completed) {
                     updateStatus('Session completed');
                     isSessionCompleted = true;
-                    updateEndSessionButton();
                     disableChatInputs();
                     if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
-                    // Mark completed and show return link
                     await markSessionCompleted();
                     document.getElementById('status').innerHTML =
-                        'Session completed! <a href="/" style="color:#667eea;font-weight:600;">← Back to sessions</a>';
+                        'Session completed! <a href="/" style="color:#2196F3;font-weight:600;">← Back to sessions</a>';
                 }
             } catch (error) {
                 console.error('Polling error', error);
@@ -479,137 +302,23 @@
         }
 
         // ===================================================================
-        // END SESSION BUTTON
-        // ===================================================================
-        function updateEndSessionButton() {
-            const btn = document.getElementById('end-session-btn');
-            if (!btn) return;
-
-            if (isSessionCompleted) {
-                btn.disabled          = true;
-                btn.title             = "Session has ended";
-                btn.style.opacity     = "0.5";
-                btn.style.cursor      = "not-allowed";
-                return;
-            }
-
-            if (sessionStartTime) {
-                const elapsed = Date.now() - sessionStartTime;
-                if (elapsed < MIN_SESSION_DURATION_MS) {
-                    btn.disabled      = true;
-                    const remaining   = Math.ceil((MIN_SESSION_DURATION_MS - elapsed) / 60000);
-                    btn.title         = `Session must be at least 45 minutes long (${remaining}m remaining)`;
-                    btn.style.opacity = "0.5";
-                    btn.style.cursor  = "not-allowed";
-                } else {
-                    btn.disabled      = false;
-                    btn.title         = "End Session";
-                    btn.style.opacity = "1";
-                    btn.style.cursor  = "pointer";
-                }
-            }
-        }
-
-        // ===================================================================
-        // VOICE RECORDING
-        // ===================================================================
-        function startRecording(stream) {
-            mediaRecorder  = new MediaRecorder(stream);
-            audioChunks    = [];
-            mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-            mediaRecorder.onstop          = sendAudioToServer;
-            mediaRecorder.start();
-            updateStatus('🎤 Recording...');
-        }
-
-        async function sendAudioToServer() {
-            if (!sessionToken) {
-                console.error('Session not initialized');
-                updateStatus('Session not initialized');
-                return;
-            }
-            updateStatus('Processing your speech...');
-
-            const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-            const formData  = new FormData();
-            formData.append('audio', audioBlob);
-            formData.append('session_token', sessionToken);
-
-            try {
-                const response = await fetch('/api/send-voice', { method: 'POST', body: formData });
-                const data     = await response.json();
-
-                if (data.success) {
-                    appendMessage('user', data.transcribed_text, 'user-' + Date.now());
-                    updateStatus('Waiting for response...');
-                } else {
-                    console.error('send-voice failed', data);
-                    updateStatus('Failed to process voice');
-                }
-            } catch (error) {
-                console.error('Error sending voice', error);
-                updateStatus('Error sending voice');
-            }
-        }
-
-        function toggleRecording() {
-            if (isSessionCompleted) {
-                updateStatus('Session has ended. Recording disabled.');
-                return;
-            }
-            if (pendingLikeCount > 0) {
-                updateStatus('⭐ Please rate the response above before recording.');
-                setTimeout(() => updateStatus(''), 2500);
-                return;
-            }
-
-            const recordButton = document.getElementById('record-toggle');
-            if (isRecording) {
-                if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
-                recordButton.classList.remove('recording');
-                recordButton.title = "Start Recording";
-            } else {
-                stopCurrentAudio();
-                navigator.mediaDevices.getUserMedia({ audio: true })
-                    .then(stream => {
-                        startRecording(stream);
-                        recordButton.classList.add('recording');
-                        recordButton.title = "Stop Recording";
-                    })
-                    .catch(error => {
-                        console.error('Error accessing microphone:', error);
-                        updateStatus('Error: Could not access microphone');
-                    });
-            }
-            isRecording = !isRecording;
-        }
-
-        // ===================================================================
         // TEXT CHAT
         // ===================================================================
         document.getElementById('chat-form').onsubmit = async function(event) {
             event.preventDefault();
-
-            if (isSessionCompleted) {
-                updateStatus('Session has ended. You can no longer send messages.');
-                return;
-            }
+            if (isSessionCompleted) { updateStatus('Session has ended.'); return; }
             if (pendingLikeCount > 0) {
                 updateStatus('⭐ Please rate the response above before continuing.');
                 setTimeout(() => updateStatus(''), 2500);
                 return;
             }
-            if (!sessionToken) {
-                updateStatus('Session not initialized yet. Please wait.');
-                return;
-            }
+            if (!sessionToken) { updateStatus('Session not initialized yet. Please wait.'); return; }
 
             const input = document.getElementById('chat-input');
             const text  = input.value.trim();
             if (!text) return;
 
             input.value = '';
-            stopCurrentAudio();
             appendMessage('user', text, 'user-' + Date.now());
 
             try {
@@ -624,8 +333,8 @@
                         rating_cultural:  lastRatingCultural,
                         rating_fluency:   lastRatingFluency,
                         rejected_options: lastRejectedOptions,
-                        topic:            lastChosenTopic,     // ← new
-                        country:          lastChosenCountry,   // ← new
+                        topic:            lastChosenTopic,
+                        country:          lastChosenCountry,
                     }),
                 });
                 const result = await response.json();
@@ -638,9 +347,6 @@
             }
         };
 
-        // ===================================================================
-        // EVENT LISTENERS
-        // ===================================================================
         document.getElementById('chat-input').addEventListener('keydown', function(event) {
             if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
@@ -648,49 +354,43 @@
             }
         });
 
-        document.getElementById('tts-toggle').addEventListener('change', function(event) {
-            ttsEnabled = event.target.checked;
-            if (!ttsEnabled) stopCurrentAudio();
-            updateStatus(ttsEnabled ? 'Voice responses enabled' : 'Voice responses disabled');
-            setTimeout(() => updateStatus(''), 2000);
-        });
-
-        document.getElementById('record-toggle').onclick = toggleRecording;
-
-        document.getElementById('end-session-btn').onclick = async function() {
-            if (!confirm('Are you sure you want to end this session? Your interview will be completed.')) return;
-            if (!sessionToken) { updateStatus('No active session to end'); return; }
-
-            try {
-                updateStatus('Ending session...');
-                stopCurrentAudio();
-                const response = await fetch('/api/end-session', {
-                    method:  'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body:    JSON.stringify({ session_token: sessionToken })
-                });
-                const result = await response.json();
-                if (result.success) {
-                    updateStatus('Session ended. Thank you for participating!');
-                    isSessionCompleted = true;
-                    updateEndSessionButton();
-                    disableChatInputs();
-                    if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
-                } else {
-                    updateStatus('Failed to end session: ' + (result.error || 'Unknown error'));
-                }
-            } catch (error) {
-                console.error('Error ending session:', error);
-                updateStatus('Error ending session');
-            }
-        };
-
         // ===================================================================
         // INITIALIZATION
         // ===================================================================
-        document.addEventListener('DOMContentLoaded', function() {
-            console.log('Page loaded, initializing session...');
-            initializeSession();
+        document.addEventListener('DOMContentLoaded', async function () {
+            // Read params from Jinja2 template variables
+            assignedSessionId = {{ session_id | tojson }};
+            assignedNTurns    = {{ n_turns    | tojson }};
+            lastChosenTopic   = {{ topic      | tojson }};
+            lastChosenCountry = {{ country    | tojson }};
+
+            updateStatus('Starting session…');
+            try {
+                const resp = await fetch('/api/start-session', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_id: assignedSessionId,
+                        country:    lastChosenCountry,
+                        topic:      lastChosenTopic,
+                        n_turns:    assignedNTurns,
+                    }),
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    sessionToken     = data.session_token;
+                    sessionStartTime = Date.now();
+                    updateStatus(`Session ready — ${lastChosenTopic} · ${lastChosenCountry}`);
+                    if (!pollingInterval) pollingInterval = setInterval(pollForMessages, 1500);
+                    pollForMessages();
+                } else {
+                    updateStatus('Failed to start session: ' + (data.error || 'Unknown error'));
+                    console.error('start-session failed:', data);
+                }
+            } catch (err) {
+                updateStatus('Error starting session');
+                console.error('Error starting session:', err);
+            }
         });
     </script>
 </body>

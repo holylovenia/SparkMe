@@ -23,9 +23,6 @@ from typing import Dict, Optional
 from dotenv import load_dotenv
 
 # Your backend imports
-from src.utils.speech.text_to_speech import TextToSpeechBase, create_tts_engine
-from src.utils.speech.audio_player import AudioPlayerBase, create_audio_player
-from src.utils.speech.speech_to_text import create_stt_engine
 from src.interview_session.interview_session import InterviewSession
 from src.utils.data_process import save_rating_to_csv
 
@@ -50,12 +47,6 @@ class AppConfig:
         self.additional_context_path = None
 
 config = AppConfig()
-
-# TTS/STT engines
-TTS_PROVIDER = os.getenv('TTS_PROVIDER', 'openai')
-TTS_VOICE = os.getenv('TTS_VOICE', 'alloy')
-tts_engine: TextToSpeechBase = create_tts_engine(provider=TTS_PROVIDER, voice=TTS_VOICE)
-stt_engine = create_stt_engine()
 
 # =============================================================================
 # FLASK APP SETUP
@@ -181,7 +172,6 @@ class SessionWrapper:
 
 active_sessions: Dict[str, SessionWrapper] = {}
 last_messages_by_session: Dict[str, Dict[str, str]] = {}
-session_audio_cache: Dict[str, Dict[str, object]] = {}
 
 def create_interview_session(user_id: str,
                              sel_session_id: str = None,
@@ -530,53 +520,11 @@ def send_message():
     # drain the buffer via get_and_clear_messages before polling sees it.
     return jsonify({'success': True, 'message': 'Message sent successfully'})
 
+# Stub
 @app.route('/api/send-voice', methods=['POST'])
-@login_required  # PROTECTED
+@login_required
 def send_voice():
-    """Send a voice message to the interview session"""
-    session_token = request.form.get('session_token')
-    audio_file = request.files.get('audio')
-
-    if not audio_file:
-        return jsonify({
-            'success': False,
-            'error': 'No audio file provided'
-        }), 400
-
-    session = get_session(session_token)
-    if not session:
-        return jsonify({
-            'success': False,
-            'error': 'Invalid or expired session'
-        }), 400
-
-    # Check if STT is available
-    if stt_engine is None:
-        return jsonify({
-            'success': False,
-            'error': 'Voice input is not enabled on this server (PyAudio not available)'
-        }), 503
-
-    temp_audio_path = Path(f"temp_audio_{uuid.uuid4().hex}.wav")
-    audio_file.save(temp_audio_path)
-
-    try:
-        transcribed_text = transcribe_audio_to_text(temp_audio_path)
-
-        wrapper = get_session_wrapper(session_token)
-        if wrapper and hasattr(wrapper, 'loop'):
-            wrapper.loop.call_soon_threadsafe(wrapper.interview_session.user.add_user_message, transcribed_text)
-        else:
-            session.user.add_user_message(transcribed_text)
-
-        return jsonify({
-            'success': True,
-            'transcribed_text': transcribed_text,
-            'message': 'Voice message processed successfully'
-        })
-    finally:
-        if temp_audio_path.exists():
-            temp_audio_path.unlink()
+    return jsonify({'success': False, 'error': 'Voice input is not supported.'}), 503
 
 @app.route('/api/get-messages', methods=['GET'])
 @login_required
@@ -655,125 +603,11 @@ def acknowledge_messages():
         
     return jsonify({'success': True})
 
+# Stub
 @app.route('/api/get-voice-response', methods=['GET'])
-@login_required  # PROTECTED
+@login_required
 def get_voice_response():
-    """Get the latest interviewer message as voice audio"""
-    session_token = request.args.get('session_token')
-    message_id = request.args.get('message_id')
-
-    session = get_session(session_token)
-    if not session:
-        return jsonify({
-            'success': False,
-            'error': 'Invalid or expired session'
-        }), 400
-
-    if not message_id:
-        return jsonify({
-            'success': False,
-            'error': 'message_id required'
-        }), 400
-
-    target_msg = None
-    for m in session.chat_history:
-        if hasattr(m, 'id') and m.id == message_id:
-            target_msg = m
-            break
-    
-    if not target_msg:
-        return jsonify({
-            'success': False,
-            'error': 'Message not found'
-        }), 404
-
-    cache = session_audio_cache.setdefault(session_token, {})
-    entry = cache.get(message_id)
-
-    # Check cache entry status
-    if isinstance(entry, dict):
-        # New format: {'status': 'pending'|'ready'|'failed', 'data': bytes|None, 'error': str|None}
-        status = entry.get('status')
-        if status == 'ready' and entry.get('data'):
-            return Response(entry['data'], mimetype='audio/mpeg')
-        elif status == 'failed':
-            return jsonify({
-                'success': False,
-                'error': f"TTS generation failed: {entry.get('error', 'Unknown error')}"
-            }), 500
-        elif status == 'pending':
-            return ('', 202)  # Still generating
-    elif isinstance(entry, (bytes, bytearray)):
-        # Legacy format support
-        return Response(entry, mimetype='audio/mpeg')
-    elif entry == 'pending':
-        # Legacy format support
-        return ('', 202)
-
-    # No cache entry exists - start generation
-    cache[message_id] = {'status': 'pending', 'data': None, 'error': None, 'timestamp': time.time()}
-    wrapper = get_session_wrapper(session_token)
-
-    if not wrapper or not hasattr(wrapper, 'loop'):
-        cache[message_id] = {
-            'status': 'failed',
-            'data': None,
-            'error': 'Session loop not available'
-        }
-        return jsonify({
-            'success': False,
-            'error': 'Session not properly initialized'
-        }), 500
-
-    async def _synth_and_cache():
-        try:
-            text = target_msg.content
-            app.logger.info(f"Starting TTS generation for message {message_id}")
-
-            def _blocking_tts():
-                out_path = Path(f"temp_speech_{uuid.uuid4().hex}.mp3")
-                try:
-                    tts_engine.text_to_speech(text=text, output_path=str(out_path))
-                    data = out_path.read_bytes()
-                    app.logger.info(f"TTS generated {len(data)} bytes for message {message_id}")
-                    return data
-                finally:
-                    if out_path.exists():
-                        out_path.unlink(missing_ok=True)
-
-            audio_bytes = await wrapper.loop.run_in_executor(None, _blocking_tts)
-
-            # Update cache with success
-            cache[message_id] = {
-                'status': 'ready',
-                'data': audio_bytes,
-                'error': None,
-                'timestamp': time.time()
-            }
-            app.logger.info(f"TTS cached successfully for message {message_id}")
-
-        except Exception as e:
-            error_msg = str(e)
-            app.logger.error(f"TTS error for message {message_id}: {error_msg}", exc_info=True)
-
-            # Update cache with failure
-            cache[message_id] = {
-                'status': 'failed',
-                'data': None,
-                'error': error_msg,
-                'timestamp': time.time()
-            }
-
-    # Schedule async TTS generation
-    future = asyncio.run_coroutine_threadsafe(_synth_and_cache(), wrapper.loop)
-
-    # Log if scheduling failed
-    try:
-        future.result(timeout=0.1)  # Quick check if it errored immediately
-    except Exception:
-        pass  # Will complete async
-
-    return ('', 202)  # Tell client to poll again
+    return jsonify({'success': False, 'error': 'Voice output is not supported.'}), 503
 
 @app.route('/api/mark-session-completed', methods=['POST'])
 @login_required
@@ -987,41 +821,18 @@ def get_last_messages():
 
 @app.route('/health', methods=['GET'])
 def health():
-    """Health check endpoint - no login required for monitoring"""
     current_time = time.time()
-    session_ages = []
-    for wrapper in active_sessions.values():
-        age_minutes = (current_time - wrapper.created_at) / 60
-        session_ages.append(age_minutes)
-    
+    session_ages = [
+        (current_time - w.created_at) / 60
+        for w in active_sessions.values()
+    ]
     avg_age = sum(session_ages) / len(session_ages) if session_ages else 0
-    
     return jsonify({
-        'status': 'healthy',
-        'active_sessions': len(active_sessions),
-        'avg_session_age_minutes': round(avg_age, 2),
-        'tts_provider': TTS_PROVIDER,
-        'tts_voice': TTS_VOICE,
-        'uptime_seconds': round(current_time - START_TIME, 2)
+        'status':                   'healthy',
+        'active_sessions':          len(active_sessions),
+        'avg_session_age_minutes':  round(avg_age, 2),
+        'uptime_seconds':           round(current_time - START_TIME, 2)
     })
-
-# =============================================================================
-# VOICE PROCESSING UTILITIES
-# =============================================================================
-
-def generate_speech_from_text(text: str, output_path: Path) -> Path:
-    """Generate speech audio from text using TTS"""
-    global tts_engine
-    if tts_engine is None:
-        raise NotImplementedError("TTS engine is not configured")
-    os.makedirs(os.path.dirname(str(output_path)) or '.', exist_ok=True)
-    result_path = tts_engine.text_to_speech(text=text, output_path=str(output_path))
-    return Path(result_path)
-
-def transcribe_audio_to_text(audio_path: Path) -> str:
-    """Transcribe audio file to text using speech recognition"""
-    global stt_engine
-    return stt_engine.transcribe(str(audio_path))
 
 def wait_for_agent_response(session, timeout: float = 60.0, poll_interval: float = 0.5):
     """Wait for the Interviewer/Agent to produce an output"""
@@ -1057,7 +868,6 @@ def wait_for_agent_response(session, timeout: float = 60.0, poll_interval: float
 # =============================================================================
 
 def cleanup_old_sessions():
-    """Remove sessions older than timeout threshold and clean stale audio cache"""
     current_time = time.time()
     to_remove = []
 
@@ -1065,7 +875,6 @@ def cleanup_old_sessions():
         age = current_time - wrapper.created_at
         if age > SESSION_TIMEOUT_SECONDS:
             to_remove.append(token)
-            session_audio_cache.pop(token, None)
             last_messages_by_session.pop(token, None)
 
     for token in to_remove:
@@ -1075,24 +884,6 @@ def cleanup_old_sessions():
 
     if to_remove:
         print(f"[Cleanup] Removed {len(to_remove)} old sessions. Active: {len(active_sessions)}")
-
-    # Clean up stale pending audio cache entries (older than 5 minutes)
-    audio_cleaned = 0
-    for session_token, cache in list(session_audio_cache.items()):
-        for message_id, entry in list(cache.items()):
-            if isinstance(entry, dict):
-                entry_age = current_time - entry.get('timestamp', current_time)
-                # Remove pending entries older than 5 minutes (likely failed)
-                if entry.get('status') == 'pending' and entry_age > 300:
-                    cache.pop(message_id, None)
-                    audio_cleaned += 1
-                # Remove failed entries older than 1 hour
-                elif entry.get('status') == 'failed' and entry_age > 3600:
-                    cache.pop(message_id, None)
-                    audio_cleaned += 1
-
-    if audio_cleaned > 0:
-        print(f"[Cleanup] Removed {audio_cleaned} stale audio cache entries")
 
 def start_cleanup_thread():
     """Start background thread for session cleanup"""
@@ -1152,7 +943,6 @@ if __name__ == '__main__':
     print(f"🐛 Debug:             {config.debug}")
     print(f"🔐 Authentication:    Enabled")
     print(f"🧹 Session Cleanup:   Every 5 minutes (timeout: {SESSION_TIMEOUT_SECONDS/60:.0f} min)")
-    print(f"🗣️  TTS Provider:      {TTS_PROVIDER} ({TTS_VOICE})")
     print("="*70)
     print(f"\n📍 Login at: http://{config.host}:{config.port}/login")
     print(f"📊 Health check: http://{config.host}:{config.port}/health")
