@@ -179,31 +179,37 @@
             if (messageId) seenMessageIds.add(messageId);
 
             const chatBox   = document.getElementById('chat-box');
-            const className = role;
             const imgUrl    = (role === 'user' || role === 'User')
                 ? "https://e7.pngegg.com/pngimages/178/595/png-clipart-user-profile-computer-icons-login-user-avatars-monochrome-black-thumbnail.png"
                 : "https://uploads-ssl.webflow.com/64e02bd14ada8a57fa327cbe/64e445ced8cf185ffb9bb1b9_Rex%20Small_.png";
 
-            if (className === 'user') {
-                chatBox.innerHTML += `
-                    <div class="message ${className}" data-msg-id="${messageId || ''}">
-                    <img src="${imgUrl}" alt="${role}">
+            if (role === 'user' || role === 'User') {
+                // ← was: chatBox.innerHTML += `...` which nuked existing DOM nodes
+                const msgDiv = document.createElement('div');
+                msgDiv.className = `message user`;
+                msgDiv.dataset.msgId = messageId || '';
+                msgDiv.innerHTML = `
+                    <img src="${imgUrl}" alt="user">
                     <p>${text.replace(/\n/g, '<br>')}</p>
-                    </div>`;
-            } else if (className === 'system') {
+                `;
+                chatBox.appendChild(msgDiv);
+
+            } else if (role === 'system') {
                 const msgDiv = document.createElement('div');
                 msgDiv.className = 'message system';
                 msgDiv.dataset.msgId = messageId || '';
                 msgDiv.innerHTML = `<span class="system-icon">💡</span><span>${text.replace(/\n/g, '<br>')}</span>`;
                 chatBox.appendChild(msgDiv);
+
             } else {
                 const msgDiv = document.createElement('div');
-                msgDiv.className = `message ${className}`;
+                msgDiv.className = `message bot`;
                 msgDiv.dataset.msgId = messageId || '';
                 msgDiv.innerHTML = `
-                    <img src="${imgUrl}" alt="${role}">
+                    <img src="${imgUrl}" alt="assistant">
                     <p>${text.replace(/\n/g, '<br>')}</p>
-                    <button class="like-btn" type="button">👍 Like</button>`;
+                    <button class="like-btn" type="button">👍 Like</button>
+                `;
 
                 pendingLikeCount++;
                 refreshLikeLock();

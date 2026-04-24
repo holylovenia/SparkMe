@@ -344,8 +344,13 @@ class InterviewSession:
                     "execution_log",
                     f"[TURNS] Maximum turns ({self.max_turns}) reached. Triggering farewell."
                 )
-                asyncio.create_task(self.trigger_farewell())   # ← was: self.session_in_progress = False
-                # Save final token usage summary
+                # Delay farewell slightly so the regular on_message response
+                # has time to reach present_as_options before session_in_progress is cleared
+                async def _delayed_farewell():
+                    await asyncio.sleep(0.5)
+                    await self.trigger_farewell()
+                asyncio.create_task(_delayed_farewell())
+
                 final_summary_path = self.token_tracker.save_final_summary()
                 SessionLogger.log_to_file(
                     "execution_log",
@@ -379,9 +384,9 @@ class InterviewSession:
     def present_as_options(self, role: str, content: list[str] = [],
                        message_type: str = MessageType.OPTION,
                        metadata: dict = {},
-                       model_names: list[str] = []):   # ← new param
+                       model_names: list[str] = []):
         """Present message as options"""
-        if not self.session_in_progress:
+        if self._farewell_done:   # ← was: if not self.session_in_progress
             return
 
         prefix = str(uuid.uuid4())
@@ -389,7 +394,6 @@ class InterviewSession:
         for i, c in enumerate(content):
             message_id = f"{prefix}|{i}"
 
-            # Store model name for this message if provided
             if i < len(model_names):
                 self._response_model_map[message_id] = model_names[i]
 
