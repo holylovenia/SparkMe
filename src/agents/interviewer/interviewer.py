@@ -1,3 +1,4 @@
+import asyncio
 import os
 import random
 import re
@@ -173,20 +174,23 @@ class Interviewer(BaseAgent, Participant):
         prompt = self._get_prompt()
         self.add_event(sender=self.name, tag="llm_prompt", content=prompt)
 
-        _responses = []
+        # Call all engines concurrently
+        tasks = [self.call_engine_async(engine, prompt) for engine in self.engines]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        _responses   = []
         _model_names = []
-        for i, engine in enumerate(self.engines):
-            try:
-                response = await self.call_engine_async(engine, prompt)
-                print(f"{GREEN}Interviewer (model {i+1} — {engine.model_name}):\n{response}{RESET}")
-                _responses.append(response)
-                _model_names.append(engine.model_name)
-            except Exception as e:
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
                 SessionLogger.log_to_file(
                     "execution_log",
-                    f"[INTERVIEWER] Engine {i+1} ({engine.model_name}) failed: {e}",
+                    f"[INTERVIEWER] Engine {i+1} ({self.engines[i].model_name}) failed: {result}",
                     log_level="error"
                 )
+            else:
+                print(f"{GREEN}Interviewer (model {i+1} — {self.engines[i].model_name}):\n{result}{RESET}")
+                _responses.append(result)
+                _model_names.append(self.engines[i].model_name)
 
         if not _responses:
             SessionLogger.log_to_file(
@@ -197,10 +201,10 @@ class Interviewer(BaseAgent, Participant):
             self._turn_to_respond = False
             return
 
-        # shuffle the responses
-        temp = list(zip(_model_names, _responses))  # Pair the elements
-        random.shuffle(temp)  # Shuffle the pairs
-        model_names, responses = zip(*temp)  # Unzip into separate lists
+        # Shuffle so model order is not predictable to the user
+        temp = list(zip(_model_names, _responses))
+        random.shuffle(temp)
+        model_names, responses = zip(*temp)
 
         try:
             self.interview_session.present_as_options(
@@ -209,16 +213,11 @@ class Interviewer(BaseAgent, Participant):
                 message_type=MessageType.CONVERSATION,
                 model_names=model_names,
             )
-            # Record each response so _get_prompt() sees them on the next turn.
-            # Without this, all_interviewer_messages stays empty and the
-            # introduction prompt fires on every single call.
             for response in responses:
                 self.add_event(sender=self.name, tag="message", content=response)
-
         except Exception as e:
             print(f"Error presenting as options: {e}. Falling back.")
             await self._handle_response(responses[0])
-            # _handle_response already calls add_event internally
 
         self._turn_to_respond = False
 
