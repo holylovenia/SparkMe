@@ -173,6 +173,37 @@ class SessionWrapper:
 active_sessions: Dict[str, SessionWrapper] = {}
 last_messages_by_session: Dict[str, Dict[str, str]] = {}
 
+def _count_completed_user_turns(user_id: str, sel_session_id, session_id,
+                                 country: str, topic: str, n_turns) -> int:
+    """Count user-turn rows already written to the ratings CSV."""
+    import csv as _csv, re as _re
+
+    def _safe(s):
+        return _re.sub(r'[^\w\-]', '_', str(s)) if s is not None else 'unknown'
+
+    filename = (
+        f"{_safe(sel_session_id if sel_session_id is not None else session_id)}_"
+        f"{_safe(country)}_{_safe(topic)}_{_safe(n_turns)}.csv"
+    )
+    ratings_file = os.path.join(
+        os.getenv('LOGS_DIR', 'logs'), user_id, 'ratings', filename
+    )
+
+    if not os.path.exists(ratings_file):
+        return 0
+
+    count = 0
+    try:
+        with open(ratings_file, 'r', encoding='utf-8') as f:
+            reader = _csv.DictReader(f)
+            for row in reader:
+                if row.get('liked_model', '') == 'user':
+                    count += 1
+    except Exception as e:
+        app.logger.warning(f"Could not count user turns from CSV: {e}")
+
+    return count
+
 def create_interview_session(user_id: str,
                              sel_session_id: str = None,
                              country: str = None,
@@ -194,17 +225,33 @@ def create_interview_session(user_id: str,
                 'INTERVIEW_DESCRIPTION',
                 "Understanding the impact of AI in the workforce"
             ),
-            "interview_plan_path": os.getenv('INTERVIEW_PLAN_PATH'),
-            "interview_evaluation": os.getenv('COMPLETION_METRIC'),
-            "additional_context_path": config.additional_context_path,
+            "interview_plan_path":        os.getenv('INTERVIEW_PLAN_PATH'),
+            "interview_evaluation":       os.getenv('COMPLETION_METRIC'),
+            "additional_context_path":    config.additional_context_path,
             "initial_user_portrait_path": os.getenv('USER_PORTRAIT_PATH'),
-            # Session-selection metadata → stored on the session object
             "sel_session_id": sel_session_id,
-            "country": country,
-            "topic": topic,
+            "country":        country,
+            "topic":          topic,
         },
         max_turns=effective_max_turns
     )
+
+    # ── Restore turn count from existing CSV so max_turns check is accurate
+    #    after a server restart or session reconnect.
+    completed_user_turns = _count_completed_user_turns(
+        user_id=user_id,
+        sel_session_id=sel_session_id,
+        session_id=interview_session.session_id,
+        country=country,
+        topic=topic,
+        n_turns=effective_max_turns,
+    )
+    if completed_user_turns > 0:
+        interview_session._user_message_count = completed_user_turns
+        app.logger.info(
+            f"Restored _user_message_count={completed_user_turns} "
+            f"from CSV for sel_session_id={sel_session_id}"
+        )
 
     wrapper = SessionWrapper(
         session_token=session_token,
@@ -219,8 +266,7 @@ def create_interview_session(user_id: str,
         l.run_forever()
     t = threading.Thread(target=_start_loop, args=(session_loop,), daemon=True)
     t.start()
-
-    wrapper.loop = session_loop
+    wrapper.loop        = session_loop
     wrapper.loop_thread = t
     asyncio.run_coroutine_threadsafe(interview_session.run(), session_loop)
 
