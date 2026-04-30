@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Demographic Survey</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .survey-container {
+            max-width: 600px;
+            margin: 40px auto;
+            padding: 30px;
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+        }
+        .survey-container h2 {
+            margin-top: 0;
+            color: #333;
+        }
+        .survey-container p.subtitle {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 24px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label.group-label {
+            display: block;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+            font-size: 15px;
+        }
+        .form-group select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 14px;
+            color: #333;
+            background: #fafafa;
+            appearance: none;
+            -webkit-appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23666' d='M6 8L0 0h12z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+        }
+        .form-group select:focus {
+            outline: none;
+            border-color: #2196F3;
+        }
+        .submit-btn {
+            width: 100%;
+            padding: 12px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 8px;
+        }
+        .submit-btn:hover { background: #388E3C; }
+        .submit-btn:disabled {
+            background: #bdbdbd;
+            cursor: not-allowed;
+        }
+        .already-done {
+            background: #e8f5e9;
+            border: 1px solid #a5d6a7;
+            border-radius: 8px;
+            padding: 14px 18px;
+            color: #2e7d32;
+            font-size: 14px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        .error-msg {
+            color: #e53935;
+            font-size: 13px;
+            margin-top: 6px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="survey-container">
+        {% if already_completed %}
+        <div style="margin-bottom:16px;">
+            <a href="/" style="color:#2196F3;font-weight:600;font-size:14px;">← Back to Sessions</a>
+        </div>
+        {% endif %}
+
+        <h2>📋 Demographic Survey</h2>
+        <p class="subtitle">
+            This information is collected anonymously to support research on cultural AI interactions.
+            All fields are required.
+        </p>
+
+        {% if already_completed %}
+        <div class="already-done" style="display:block;">
+            ✓ You have already completed this survey. You can update your answers below.
+        </div>
+        {% endif %}
+
+        <form id="survey-form">
+            <div class="form-group">
+                <label class="group-label" for="gender">Gender</label>
+                <select id="gender" name="gender" required>
+                    <option value="">— Select —</option>
+                    <option value="Male"               {% if data.gender == 'Male' %}selected{% endif %}>Male</option>
+                    <option value="Female"             {% if data.gender == 'Female' %}selected{% endif %}>Female</option>
+                    <option value="Non-binary"         {% if data.gender == 'Non-binary' %}selected{% endif %}>Non-binary</option>
+                    <option value="Prefer not to say"  {% if data.gender == 'Prefer not to say' %}selected{% endif %}>Prefer not to say / Other</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label class="group-label" for="orientation">Sexual Orientation</label>
+                <select id="orientation" name="orientation" required>
+                    <option value="">— Select —</option>
+                    <option value="Heterosexual"       {% if data.orientation == 'Heterosexual' %}selected{% endif %}>Heterosexual</option>
+                    <option value="Lesbian or Gay"     {% if data.orientation == 'Lesbian or Gay' %}selected{% endif %}>Lesbian or Gay</option>
+                    <option value="Bisexual"           {% if data.orientation == 'Bisexual' %}selected{% endif %}>Bisexual</option>
+                    <option value="Uncertain"          {% if data.orientation == 'Uncertain' %}selected{% endif %}>Uncertain</option>
+                    <option value="Prefer not to say"  {% if data.orientation == 'Prefer not to say' %}selected{% endif %}>Prefer not to say / Other</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label class="group-label" for="age">Age</label>
+                <select id="age" name="age" required>
+                    <option value="">— Select —</option>
+                    <option value="18-24"              {% if data.age == '18-24' %}selected{% endif %}>18–24</option>
+                    <option value="25-34"              {% if data.age == '25-34' %}selected{% endif %}>25–34</option>
+                    <option value="35-44"              {% if data.age == '35-44' %}selected{% endif %}>35–44</option>
+                    <option value="45-54"              {% if data.age == '45-54' %}selected{% endif %}>45–54</option>
+                    <option value="55-64"              {% if data.age == '55-64' %}selected{% endif %}>55–64</option>
+                    <option value="65+"                {% if data.age == '65+' %}selected{% endif %}>65+</option>
+                    <option value="Prefer not to say"  {% if data.age == 'Prefer not to say' %}selected{% endif %}>Prefer not to say</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label class="group-label" for="ethnicity">Ethnicity</label>
+                <select id="ethnicity" name="ethnicity" required>
+                    <option value="">— Select —</option>
+                    <option value="White/Caucasian"    {% if data.ethnicity == 'White/Caucasian' %}selected{% endif %}>White / Caucasian</option>
+                    <option value="Asian"              {% if data.ethnicity == 'Asian' %}selected{% endif %}>Asian</option>
+                    <option value="Black/African"      {% if data.ethnicity == 'Black/African' %}selected{% endif %}>Black / African descent</option>
+                    <option value="Hispanic/Latino"    {% if data.ethnicity == 'Hispanic/Latino' %}selected{% endif %}>Hispanic / Latino</option>
+                    <option value="Native American"    {% if data.ethnicity == 'Native American' %}selected{% endif %}>Native American</option>
+                    <option value="Middle Eastern"     {% if data.ethnicity == 'Middle Eastern' %}selected{% endif %}>Middle Eastern</option>
+                    <option value="Prefer not to say"  {% if data.ethnicity == 'Prefer not to say' %}selected{% endif %}>Prefer not to say / Other</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label class="group-label" for="education">Education</label>
+                <select id="education" name="education" required>
+                    <option value="">— Select —</option>
+                    <option value="No University Degree"  {% if data.education == 'No University Degree' %}selected{% endif %}>No University Degree</option>
+                    <option value="Undergraduate Degree"  {% if data.education == 'Undergraduate Degree' %}selected{% endif %}>Undergraduate Degree</option>
+                    <option value="Graduate Degree"       {% if data.education == 'Graduate Degree' %}selected{% endif %}>Graduate Degree</option>
+                    <option value="Prefer not to say"     {% if data.education == 'Prefer not to say' %}selected{% endif %}>Prefer not to say / Other</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label class="group-label" for="country">Country</label>
+                <select id="country" name="country" required>
+                    <option value="">— Select —</option>
+                    {% for c in countries %}
+                    <option value="{{ c }}" {% if data.country == c %}selected{% endif %}>{{ c }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="error-msg" id="error-msg">Please fill in all fields before submitting.</div>
+
+            <button type="submit" class="submit-btn" id="submit-btn">Save & Continue →</button>
+        </form>
+    </div>
+
+    <script>
+        document.getElementById('survey-form').onsubmit = async function(e) {
+            e.preventDefault();
+
+            const fields = ['gender','orientation','age','ethnicity','education','country'];
+            const data   = {};
+            let valid    = true;
+
+            fields.forEach(f => {
+                const val = document.getElementById(f).value;
+                if (!val) valid = false;
+                data[f] = val;
+            });
+
+            if (!valid) {
+                document.getElementById('error-msg').style.display = 'block';
+                return;
+            }
+            document.getElementById('error-msg').style.display = 'none';
+
+            const btn = document.getElementById('submit-btn');
+            btn.disabled    = true;
+            btn.textContent = 'Saving…';
+
+            try {
+                const resp = await fetch('/api/save-survey', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify(data),
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    window.location.href = '/';
+                } else {
+                    btn.disabled    = false;
+                    btn.textContent = 'Save & Continue →';
+                    alert('Error saving survey: ' + (result.error || 'Unknown error'));
+                }
+            } catch (err) {
+                btn.disabled    = false;
+                btn.textContent = 'Save & Continue →';
+                alert('Network error — please try again.');
+            }
+        };
+    </script>
+</body>
+</html>

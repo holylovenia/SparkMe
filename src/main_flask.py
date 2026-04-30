@@ -159,6 +159,76 @@ def run_async_task(coro):
     return asyncio.run_coroutine_threadsafe(coro, loop)
 
 # =============================================================================
+# DEMOGRAPHIC SURVEY
+# =============================================================================
+
+# ── Survey helpers ────────────────────────────────────────────────────────────
+
+def get_survey_path(user_id: str) -> str:
+    return os.path.join(os.getenv('DATA_DIR', 'data'), user_id, 'survey.json')
+
+def load_survey(user_id: str) -> dict:
+    path = get_survey_path(user_id)
+    if os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+def save_survey(user_id: str, data: dict):
+    path = get_survey_path(user_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    data['completed_at'] = time.time()
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2)
+
+def survey_completed(user_id: str) -> bool:
+    data = load_survey(user_id)
+    required = ['gender', 'orientation', 'age', 'ethnicity', 'education', 'country']
+    return all(data.get(f) for f in required)
+
+# ── Country list for the survey dropdown ─────────────────────────────────────
+
+def get_all_countries() -> list:
+    return [
+        "Afghanistan","Albania","Algeria","Argentina","Australia","Austria",
+        "Bangladesh","Belgium","Brazil","Canada","Chile","China","Colombia",
+        "Croatia","Czech Republic","Denmark","Egypt","Ethiopia","Finland",
+        "France","Germany","Ghana","Greece","Hungary","India","Indonesia",
+        "Iran","Iraq","Ireland","Israel","Italy","Japan","Jordan","Kenya",
+        "Lebanon","Malaysia","Mexico","Morocco","Netherlands","New Zealand",
+        "Nigeria","Norway","Pakistan","Peru","Philippines","Poland","Portugal",
+        "Romania","Russia","Saudi Arabia","Serbia","Singapore","South Africa",
+        "South Korea","Spain","Sri Lanka","Sweden","Switzerland","Syria",
+        "Taiwan","Thailand","Turkey","UAE","Ukraine","United Kingdom",
+        "United States","Venezuela","Vietnam","Yemen"
+    ]
+
+@app.route('/survey')
+@login_required
+def survey():
+    """Demographic survey page."""
+    user_id   = current_user.id
+    data      = load_survey(user_id)
+    completed = survey_completed(user_id)
+    countries = get_all_countries()
+    return render_template('survey.html',
+                           data=data,
+                           already_completed=completed,
+                           countries=countries)
+
+
+@app.route('/api/save-survey', methods=['POST'])
+@login_required
+def api_save_survey():
+    """Save demographic survey answers."""
+    data     = request.json or {}
+    required = ['gender', 'orientation', 'age', 'ethnicity', 'education', 'country']
+    if not all(data.get(f) for f in required):
+        return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+    save_survey(current_user.id, {f: data[f] for f in required})
+    return jsonify({'success': True})
+
+# =============================================================================
 # SESSION MANAGEMENT
 # =============================================================================
 
@@ -376,7 +446,10 @@ def logout():
 @app.route('/')
 @login_required
 def index():
-    """Session selection page - shown after login"""
+    """Session selection page — survey must be completed first."""
+    if not survey_completed(current_user.id):
+        flash('Please complete the demographic survey before starting.', 'info')
+        return redirect(url_for('survey'))
     return render_template('sessions.html', username=current_user.username)
 
 @app.route('/chat')
