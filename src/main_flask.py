@@ -634,6 +634,81 @@ def mark_session_completed():
     save_user_sessions(user_id, sessions)
     return jsonify({'success': True, 'message': f'Session {sel_session_id} marked completed'})
 
+@app.route('/api/session-history', methods=['GET'])
+@login_required
+def session_history():
+    """Reconstruct chat history from the ratings CSV for a given assigned session."""
+    session_token = request.args.get('session_token')
+
+    wrapper = get_session_wrapper(session_token)
+    if not wrapper:
+        return jsonify({'success': False, 'error': 'Invalid session'}), 400
+
+    session = wrapper.interview_session
+
+    import re, csv
+    def _safe(s):
+        return re.sub(r'[^\w\-]', '_', str(s)) if s is not None else 'unknown'
+
+    sel_session_id = getattr(session, 'sel_session_id', None)
+    country        = getattr(session, 'country',        None)
+    topic          = getattr(session, 'topic',          None)
+    n_turns        = session.max_turns
+
+    filename = (
+        f"{_safe(sel_session_id if sel_session_id is not None else session.session_id)}_"
+        f"{_safe(country)}_{_safe(topic)}_{_safe(n_turns)}.csv"
+    )
+    ratings_dir  = os.path.join(os.getenv('LOGS_DIR', 'logs'), session.user_id, 'ratings')
+    ratings_file = os.path.join(ratings_dir, filename)
+
+    if not os.path.exists(ratings_file):
+        return jsonify({'success': True, 'messages': []})
+
+    messages = []
+    try:
+        with open(ratings_file, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for i, row in enumerate(reader):
+                liked_model    = row.get('liked_model', '')
+                liked_response = row.get('liked_response', '')
+                follow_up      = row.get('follow_up', '')
+
+                if not liked_response:
+                    continue
+
+                if liked_model == 'user':
+                    # User turn
+                    messages.append({
+                        'id':      f"history_user_{i}",
+                        'role':    'User',
+                        'content': liked_response,
+                    })
+                    # If a follow-up guidance was shown after this user turn
+                    if follow_up:
+                        messages.append({
+                            'id':      f"history_system_{i}",
+                            'role':    'System',
+                            'content': follow_up,
+                        })
+                else:
+                    # Bot turn — show as already-rated (no like button needed)
+                    rating_c = row.get('rating_cultural', '')
+                    rating_f = row.get('rating_fluency',  '')
+                    messages.append({
+                        'id':             f"history_bot_{i}",
+                        'role':           'Interviewer',
+                        'content':        liked_response,
+                        'already_rated':  True,
+                        'rating_cultural': rating_c,
+                        'rating_fluency':  rating_f,
+                    })
+    except Exception as e:
+        app.logger.error(f"Error reading history CSV: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+    return jsonify({'success': True, 'messages': messages})
+
 @app.route('/api/end-session', methods=['POST'])
 @login_required
 def end_session():
@@ -651,6 +726,7 @@ def end_session():
         return jsonify({'success': True, 'message': 'Session is already ending'})
 
     asyncio.run_coroutine_threadsafe(session.trigger_farewell(), wrapper.loop)
+    wrapper.ended_at = time.time()
     app.logger.info(f"Session {session_token} farewell triggered by user")
 
     return jsonify({
@@ -873,17 +949,28 @@ def cleanup_old_sessions():
 
     for token, wrapper in list(active_sessions.items()):
         age = current_time - wrapper.created_at
+        session = wrapper.interview_session
+
+        # Remove sessions older than timeout
         if age > SESSION_TIMEOUT_SECONDS:
             to_remove.append(token)
-            last_messages_by_session.pop(token, None)
+            continue
+
+        # Remove sessions that ended (farewell done) more than 10 minutes ago
+        if getattr(session, '_farewell_done', False) or \
+                getattr(session, '_farewell_rated', False):
+            ended_age = current_time - getattr(wrapper, 'ended_at', current_time)
+            if ended_age > 600:
+                to_remove.append(token)
 
     for token in to_remove:
         wrapper = active_sessions.pop(token, None)
+        last_messages_by_session.pop(token, None)
         if wrapper:
-            print(f"[Cleanup] Removed session {token} (age: {age/60:.1f}min, user: {wrapper.user_id})")
+            print(f"[Cleanup] Removed session {token} (user: {wrapper.user_id})")
 
     if to_remove:
-        print(f"[Cleanup] Removed {len(to_remove)} old sessions. Active: {len(active_sessions)}")
+        print(f"[Cleanup] Removed {len(to_remove)} sessions. Active: {len(active_sessions)}")
 
 def start_cleanup_thread():
     """Start background thread for session cleanup"""

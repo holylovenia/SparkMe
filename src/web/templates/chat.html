@@ -7,6 +7,10 @@
 </head>
 <body>
     <div class="chat-container">
+        <div style="margin-bottom: 10px;">
+            <a href="/" style="color:#2196F3; font-weight:600; font-size:14px;">← Back to Sessions</a>
+        </div>
+
         <div class="instructions-panel" id="instructions-panel">
             <h3>📋 Interview Instructions</h3>
             <ul>
@@ -49,6 +53,16 @@
         let assignedSessionId   = null;
         let assignedNTurns      = null;
         let waitingForResponse = false;
+
+        function saveSessionToken(token) {
+            sessionStorage.setItem(window.SESSION_STORAGE_KEY || 'session_token', token);
+        }
+        function loadSessionToken() {
+            return sessionStorage.getItem(window.SESSION_STORAGE_KEY || 'session_token');
+        }
+        function clearSessionToken() {
+            sessionStorage.removeItem(window.SESSION_STORAGE_KEY || 'session_token');
+        }
 
         // ===================================================================
         // UTILITY FUNCTIONS
@@ -247,13 +261,50 @@
         }
 
         function appendSystemMessage(text) {
-            const chatBox = document.getElementById('chat-box');
-            const div = document.createElement('div');
-            div.className = 'message system';
-            div.innerHTML = `<span class="system-icon">💡</span><span>${text.replace(/\n/g, '<br>')}</span>`;
-            chatBox.appendChild(div);
-            scrollToBottom();
+                const chatBox = document.getElementById('chat-box');
+                const div = document.createElement('div');
+                div.className = 'message system';
+                div.innerHTML = `<span class="system-icon">💡</span><span>${text.replace(/\n/g, '<br>')}</span>`;
+                chatBox.appendChild(div);
+                scrollToBottom();
+            }
+
+            function appendHistoryMessage(role, text, messageId, ratingCultural, ratingFluency) {
+        if (messageId && seenMessageIds.has(messageId)) return;
+        if (messageId) seenMessageIds.add(messageId);
+
+        const chatBox = document.getElementById('chat-box');
+        const imgUrl  = (role === 'User' || role === 'user')
+            ? "https://e7.pngegg.com/pngimages/178/595/png-clipart-user-profile-computer-icons-login-user-avatars-monochrome-black-thumbnail.png"
+            : "https://uploads-ssl.webflow.com/64e02bd14ada8a57fa327cbe/64e445ced8cf185ffb9bb1b9_Rex%20Small_.png";
+
+        const msgDiv = document.createElement('div');
+
+        if (role === 'System' || role === 'system') {
+            msgDiv.className = 'message system';
+            msgDiv.dataset.msgId = messageId || '';
+            msgDiv.innerHTML = `<span class="system-icon">💡</span><span>${text.replace(/\n/g, '<br>')}</span>`;
+        } else if (role === 'User' || role === 'user') {
+            msgDiv.className = 'message user';
+            msgDiv.dataset.msgId = messageId || '';
+            msgDiv.innerHTML = `<img src="${imgUrl}" alt="user"><p>${text.replace(/\n/g, '<br>')}</p>`;
+        } else {
+            // Bot message — already rated, show badge instead of like button
+            msgDiv.className = 'message bot';
+            msgDiv.dataset.msgId = messageId || '';
+            const badge = (ratingCultural && ratingFluency)
+                ? `<span class="rating-done-badge">✓ Rated — cultural: ${ratingCultural}/5 · fluency: ${ratingFluency}/5</span>`
+                : '';
+            msgDiv.innerHTML = `
+                <img src="${imgUrl}" alt="assistant">
+                <p>${text.replace(/\n/g, '<br>')}</p>
+                ${badge}
+            `;
         }
+
+        chatBox.appendChild(msgDiv);
+        scrollToBottom();
+    }
 
         // ===================================================================
         // MESSAGE POLLING
@@ -273,7 +324,9 @@
         async function pollForMessages() {
             if (!sessionToken) return;
             try {
-                const response = await fetch(`/api/get-messages?session_token=${sessionToken}`);
+                const response = await fetchWithTimeout(
+                    `/api/get-messages?session_token=${sessionToken}`, {}, 10000
+                );
                 if (response.status === 400) {
                     sessionToken = null;
                     clearInterval(pollingInterval);
@@ -304,7 +357,7 @@
                 }
 
                 if (data.session_completed) {
-                    hideTypingIndicator();
+                    clearSessionToken();
                     updateStatus('Session completed');
                     isSessionCompleted = true;
                     disableChatInputs();
@@ -315,6 +368,20 @@
                 }
             } catch (error) {
                 console.error('Polling error', error);
+            }
+        }
+
+        async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+                const response = await fetch(url, { ...options, signal: controller.signal });
+                return response;
+            } catch (err) {
+                if (err.name === 'AbortError') throw new Error(`Request timed out: ${url}`);
+                throw err;
+            } finally {
+                clearTimeout(timer);
             }
         }
 
@@ -419,15 +486,62 @@
         // INITIALIZATION
         // ===================================================================
         document.addEventListener('DOMContentLoaded', async function () {
-            // Read params from Jinja2 template variables
             assignedSessionId = {{ session_id | tojson }};
             assignedNTurns    = {{ n_turns    | tojson }};
             lastChosenTopic   = {{ topic      | tojson }};
             lastChosenCountry = {{ country    | tojson }};
 
+            window.SESSION_STORAGE_KEY = `session_token_${assignedSessionId}`;
+
+            // Try to reconnect to an existing session from a previous load
+            const stored = loadSessionToken();
+                if (stored) {
+                    try {
+                        const check = await fetchWithTimeout(
+                            `/api/get-messages?session_token=${stored}`, {}, 5000
+                        );
+                        if (check.ok) {
+                            sessionToken     = stored;
+                            sessionStartTime = Date.now();
+                            updateStatus(`Reconnected — ${lastChosenTopic} · ${lastChosenCountry}`);
+
+                            // ── Replay history from CSV before resuming polling
+                            try {
+                                const histResp = await fetchWithTimeout(
+                                    `/api/session-history?session_token=${stored}`, {}, 8000
+                                );
+                                const histData = await histResp.json();
+                                if (histData.success && histData.messages.length > 0) {
+                                    histData.messages.forEach(msg => {
+                                        appendHistoryMessage(
+                                            msg.role,
+                                            msg.content,
+                                            msg.id,
+                                            msg.rating_cultural,
+                                            msg.rating_fluency
+                                        );
+                                    });
+                                    // Scroll to bottom after replaying all history
+                                    scrollToBottom();
+                                }
+                            } catch (e) {
+                                console.warn('Could not load history:', e);
+                            }
+
+                            if (!pollingInterval) pollingInterval = setInterval(pollForMessages, 1500);
+                            pollForMessages();
+                            return;
+                        }
+                    } catch (e) {
+                        console.warn('Stored session invalid, starting fresh:', e);
+                    }
+                    clearSessionToken();
+                }
+
+            // No valid stored session — start a new one
             updateStatus('Starting session…');
             try {
-                const resp = await fetch('/api/start-session', {
+                const resp = await fetchWithTimeout('/api/start-session', {
                     method:  'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -436,11 +550,13 @@
                         topic:      lastChosenTopic,
                         n_turns:    assignedNTurns,
                     }),
-                });
+                }, 15000);
                 const data = await resp.json();
                 if (data.success) {
                     sessionToken     = data.session_token;
+                    saveSessionToken(sessionToken);
                     sessionStartTime = Date.now();
+                    saveSessionToken(sessionToken);
                     updateStatus(`Session ready — ${lastChosenTopic} · ${lastChosenCountry}`);
                     if (!pollingInterval) pollingInterval = setInterval(pollForMessages, 1500);
                     pollForMessages();
@@ -449,7 +565,7 @@
                     console.error('start-session failed:', data);
                 }
             } catch (err) {
-                updateStatus('Error starting session');
+                updateStatus('Error starting session — try refreshing or going back.');
                 console.error('Error starting session:', err);
             }
         });

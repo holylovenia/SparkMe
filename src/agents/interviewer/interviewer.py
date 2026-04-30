@@ -170,12 +170,18 @@ class Interviewer(BaseAgent, Participant):
             self.add_event(sender=message.role, tag="message", content=message.content)
 
         self._turn_to_respond = True
-
         prompt = self._get_prompt()
         self.add_event(sender=self.name, tag="llm_prompt", content=prompt)
 
-        # Call all engines concurrently
-        tasks = [self.call_engine_async(engine, prompt) for engine in self.engines]
+        ENGINE_TIMEOUT = float(os.getenv("ENGINE_TIMEOUT_SECONDS", "60"))
+
+        async def _call_with_timeout(engine, prompt):
+            return await asyncio.wait_for(
+                self.call_engine_async(engine, prompt),
+                timeout=ENGINE_TIMEOUT
+            )
+
+        tasks   = [_call_with_timeout(engine, prompt) for engine in self.engines]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         _responses   = []
@@ -195,13 +201,12 @@ class Interviewer(BaseAgent, Participant):
         if not _responses:
             SessionLogger.log_to_file(
                 "execution_log",
-                "[INTERVIEWER] All engines failed — no responses to present.",
+                "[INTERVIEWER] All engines failed or timed out.",
                 log_level="error"
             )
             self._turn_to_respond = False
             return
 
-        # Shuffle so model order is not predictable to the user
         temp = list(zip(_model_names, _responses))
         random.shuffle(temp)
         model_names, responses = zip(*temp)
