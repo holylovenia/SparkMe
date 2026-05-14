@@ -254,10 +254,10 @@ class Interviewer(BaseAgent, Participant):
         )
 
         instruction = (
-            f"You are conducting an interview about \"{topic}\" "
+            f"You are conducting an interview"
             f"with a participant that is interested about {country}. "
             f"Based on the conversation so far, give a natural response "
-            f"that might deepens their understanding of \"{topic}\" in {country}."
+            f"that might deepen their understanding of {country}."
         )
 
         return (
