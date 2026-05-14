@@ -548,7 +548,7 @@ class InterviewSession:
                     continue
 
             if indices:
-                chosen = ", ".join([self._follow_up_options[index] for index in indices])
+                chosen = " OR ".join([self._follow_up_options[index] for index in indices])
                 SessionLogger.log_to_file(
                     "execution_log",
                     f"[GUIDANCE] LLM selected indices {indices}, picked: {chosen}"

@@ -2,12 +2,22 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Demographic Survey</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <style>
+        body {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 40px 16px;          /* top room so heading is never clipped */
+        }
         .survey-container {
             max-width: 600px;
-            margin: 40px auto;
+            margin: 0 auto;              /* was: 40px auto */
             padding: 30px;
             background: #fff;
             border-radius: 10px;
@@ -185,6 +195,7 @@
                 ('Advanced',       'Advanced'),
                 ('Intermediate',   'Intermediate'),
                 ('Basic',          'Basic'),
+                ('Not a speaker',   'Not a speaker')
             ] %}
 
             <div class="form-group">
@@ -268,7 +279,7 @@
         document.getElementById('survey-form').onsubmit = async function(e) {
             e.preventDefault();
 
-            const fields = ['gender','orientation','age','ethnicity','education','country'];
+            const fields = ['gender', 'age', 'ethnicity', 'education', 'country', 'llm_familiarity', 'llm_frequency'];
             const data   = {};
             let valid    = true;
 

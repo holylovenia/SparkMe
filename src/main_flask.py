@@ -182,8 +182,8 @@ def save_survey(user_id: str, data: dict):
         json.dump(data, f, indent=2)
 
 def survey_completed(user_id: str) -> bool:
-    data = load_survey(user_id)
-    required = ['gender', 'orientation', 'age', 'ethnicity', 'education', 'country']
+    data     = load_survey(user_id)
+    required = ['gender', 'age', 'ethnicity', 'education', 'country', 'llm_familiarity', 'llm_frequency']
     return all(data.get(f) for f in required)
 
 # ── Country list for the survey dropdown ─────────────────────────────────────
@@ -222,7 +222,7 @@ def survey():
 def api_save_survey():
     """Save demographic survey answers."""
     data     = request.json or {}
-    required = ['gender', 'orientation', 'age', 'ethnicity', 'education', 'country']
+    required = ['gender', 'age', 'ethnicity', 'education', 'country', 'llm_familiarity', 'llm_frequency']
     if not all(data.get(f) for f in required):
         return jsonify({'success': False, 'error': 'Missing required fields'}), 400
     save_survey(current_user.id, {f: data[f] for f in required})
