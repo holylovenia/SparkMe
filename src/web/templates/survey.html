@@ -279,7 +279,11 @@
         document.getElementById('survey-form').onsubmit = async function(e) {
             e.preventDefault();
 
-            const fields = ['gender', 'age', 'ethnicity', 'education', 'country', 'llm_familiarity', 'llm_frequency'];
+            const fields = [
+                'gender', 'age', 'ethnicity', 'education', 'country',
+                'lang_english', 'lang_french', 'lang_msa', 'lang_dialect',
+                'llm_familiarity', 'llm_frequency'
+            ];
             const data   = {};
             let valid    = true;
 
