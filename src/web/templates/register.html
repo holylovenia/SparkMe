@@ -83,6 +83,22 @@
         button:active {
             transform: translateY(0);
         }
+
+        select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e1e8ed;
+            border-radius: 6px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+            background: white;
+            cursor: pointer;
+        }
+
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
         
         .link-text {
             text-align: center;
@@ -143,6 +159,26 @@
                 <label for="username">Username</label>
                 <input type="text" id="username" name="username" required autofocus>
                 <div class="help-text">Choose a unique username</div>
+            </div>
+
+            <div class="form-group">
+                <label for="country">Country</label>
+                <select id="country" name="country" required>
+                    <option value="" disabled selected>Select your country</option>
+                    <option value="Tunisia">Tunisia</option>
+                    <option value="Jordan">Jordan</option>
+                    <option value="Egypt">Egypt</option>
+                    <option value="Lebanon">Lebanon</option>
+                    <option value="Algeria">Algeria</option>
+                    <option value="Morocco">Morocco</option>
+                    <option value="KSA">KSA</option>
+                    <option value="Yemen">Yemen</option>
+                    <option value="UAE">UAE</option>
+                    <option value="Syria">Syria</option>
+                    <option value="Palestine">Palestine</option>
+                    <option value="Sudan">Sudan</option>
+                    <option value="Libya">Libya</option>
+                </select>
             </div>
             
             <div class="form-group">

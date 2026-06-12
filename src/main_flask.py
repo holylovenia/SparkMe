@@ -396,45 +396,57 @@ def login():
 def register():
     """Registration page"""
     if current_user.is_authenticated:
-        return redirect(url_for('index'))  # Changed: redirect to index with instructions
-    
+        return redirect(url_for('index'))
+
+    VALID_COUNTRIES = {
+        'Tunisia', 'Jordan', 'Egypt', 'Lebanon', 'Algeria',
+        'Morocco', 'KSA', 'Yemen', 'UAE', 'Syria',
+        'Palestine', 'Sudan', 'Libya'
+    }
+
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
-        
+        country  = request.form.get('country', '').strip()
+
         if not username or not password:
             flash('Username and password are required', 'error')
             return render_template('register.html')
-        
+
         if len(password) < 6:
             flash('Password must be at least 6 characters', 'error')
             return render_template('register.html')
-        
+
+        if country not in VALID_COUNTRIES:
+            flash('Please select a valid country', 'error')
+            return render_template('register.html')
+
         users = load_users()
-        
+
         # Check if username exists
         for user_data in users.values():
             if user_data['username'] == username:
                 flash('Username already exists', 'error')
                 return render_template('register.html')
-        
+
         # Create new user
         user_id = secrets.token_urlsafe(16)
         users[user_id] = {
             'username': username,
             'password': hash_password(password),
+            'country':  country,           # ← new
             'created_at': time.time()
         }
         save_users(users)
-        
+
         # Create user directories
         os.makedirs(os.path.join(os.getenv('LOGS_DIR', 'logs'), user_id), exist_ok=True)
         os.makedirs(os.path.join(os.getenv('DATA_DIR', 'data'), user_id), exist_ok=True)
-        
-        app.logger.info(f"New user registered: {username} ({user_id})")
+
+        app.logger.info(f"New user registered: {username} ({user_id}) from {country}")
         flash('Registration successful! Please login.', 'success')
         return redirect(url_for('login'))
-    
+
     return render_template('register.html')
 
 @app.route('/logout')
