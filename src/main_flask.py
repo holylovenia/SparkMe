@@ -481,6 +481,13 @@ def unified_chat():
     topic = request.args.get('topic')
     n_turns = request.args.get('n_turns')
 
+    # Look up first_prompt from user_sessions.json
+    sessions     = load_user_sessions(current_user.id)
+    first_prompt = next(
+        (s.get('first_prompt', '') for s in sessions if str(s['session_id']) == str(session_id)),
+        ''
+    )
+
     if not all([session_id, country, topic, n_turns]):
         flash('Please select a session first.', 'error')
         return redirect(url_for('index'))
@@ -490,6 +497,7 @@ def unified_chat():
                            session_id=session_id,
                            country=country,
                            topic=topic,
+                           first_prompt=first_prompt,
                            n_turns=int(n_turns))
 
 # =============================================================================
