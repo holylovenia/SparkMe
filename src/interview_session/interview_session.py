@@ -418,6 +418,7 @@ class InterviewSession:
     def add_message_to_chat_history(self, role: str, content: str = "", reply_to: str = "",
                                 message_type: str = MessageType.CONVERSATION,
                                 rating_cultural: int = None, rating_fluency: int = None,
+                                rating_contextual: int = None,
                                 rejected_options: list = None,
                                 topic: str = None, country: str = None):
         if not self.session_in_progress:
@@ -433,6 +434,8 @@ class InterviewSession:
             metadata["rating_cultural"] = rating_cultural
         if rating_fluency is not None:
             metadata["rating_fluency"] = rating_fluency
+        if rating_contextual is not None:
+            metadata["rating_contextual"] = rating_contextual
         if rejected_options:
             metadata["rejected_options"] = rejected_options
         if topic is not None:
@@ -463,6 +466,7 @@ class InterviewSession:
                     reply_to=content,          # user's text is the "liked_response" column
                     rating_cultural=None,
                     rating_fluency=None,
+                    rating_contextual=None,
                     rejected_options=[],
                     user_id=self.user_id,
                     session_id=self.session_id,
@@ -471,6 +475,7 @@ class InterviewSession:
                     country=self.country,
                     liked_model="user",        # signals this row is a user turn
                     rejected_models=[],
+                    rejected_message_ids=[],
                     sel_session_id=self.sel_session_id,
                     n_turns=self.max_turns,
                 )

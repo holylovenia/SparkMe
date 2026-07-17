@@ -54,6 +54,7 @@ class UserDummyParticipant(User):
 
     def add_user_message(self, text: str, reply_to: str,
                      rating_cultural: int = None, rating_fluency: int = None,
+                     rating_contextual: int = None,
                      rejected_options: list = None,
                      topic: str = None, country: str = None):
         self.interview_session.add_message_to_chat_history(
@@ -62,6 +63,7 @@ class UserDummyParticipant(User):
             reply_to=reply_to,
             rating_cultural=rating_cultural,
             rating_fluency=rating_fluency,
+            rating_contextual=rating_contextual,
             rejected_options=rejected_options or [],
             topic=topic,
             country=country,

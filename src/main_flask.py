@@ -586,6 +586,7 @@ def submit_rating():
     reply_to             = data.get('reply_to', None)
     rating_cultural      = data.get('rating_cultural', None)
     rating_fluency       = data.get('rating_fluency', None)
+    rating_contextual    = data.get('rating_contextual', None)
     rejected_options     = data.get('rejected_options', [])
     rejected_message_ids = data.get('rejected_message_ids', [])
 
@@ -610,6 +611,7 @@ def submit_rating():
         reply_to=reply_to,
         rating_cultural=rating_cultural,
         rating_fluency=rating_fluency,
+        rating_contextual=rating_contextual,
         rejected_options=rejected_options,
         user_id=session.user_id,
         session_id=session.session_id,
@@ -618,6 +620,7 @@ def submit_rating():
         country=country,
         liked_model=liked_model,
         rejected_models=rejected_models,
+        rejected_message_ids=rejected_message_ids,
         sel_session_id=session.sel_session_id,
         n_turns=session.max_turns,
     )
@@ -637,6 +640,7 @@ def send_message():
     reply_to         = data.get('reply_to', None)
     rating_cultural  = data.get('rating_cultural', None)
     rating_fluency   = data.get('rating_fluency', None)
+    rating_contextual = data.get('rating_contextual', None)
     rejected_options = data.get('rejected_options', [])
     topic            = data.get('topic', None)
     country          = data.get('country', None)
@@ -652,12 +656,12 @@ def send_message():
     if wrapper and hasattr(wrapper, 'loop'):
         wrapper.loop.call_soon_threadsafe(
             wrapper.interview_session.user.add_user_message,
-            user_message, reply_to, rating_cultural, rating_fluency, rejected_options,
+            user_message, reply_to, rating_cultural, rating_fluency, rating_contextual, rejected_options,
             topic, country
         )
     else:
         session.user.add_user_message(
-            user_message, reply_to, rating_cultural, rating_fluency, rejected_options,
+            user_message, reply_to, rating_cultural, rating_fluency, rating_contextual, rejected_options,
             topic, country
         )
 
@@ -842,6 +846,7 @@ def session_history():
                     # Bot turn — show as already-rated (no like button needed)
                     rating_c = row.get('rating_cultural', '')
                     rating_f = row.get('rating_fluency',  '')
+                    rating_ctx = row.get('rating_contextual',  '')
                     messages.append({
                         'id':             f"history_bot_{i}",
                         'role':           'Interviewer',
@@ -849,6 +854,7 @@ def session_history():
                         'already_rated':  True,
                         'rating_cultural': rating_c,
                         'rating_fluency':  rating_f,
+                        'rating_contextual': rating_ctx,
                     })
     except Exception as e:
         app.logger.error(f"Error reading history CSV: {e}")

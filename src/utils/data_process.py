@@ -9,10 +9,11 @@ from src.interview_session.session_models import Message
 
 
 def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
-                       rating_cultural, rating_fluency,
+                       rating_cultural, rating_fluency, rating_contextual,
                        rejected_options: list, user_id: str, session_id: str,
                        follow_up: str = None, topic: str = None, country: str = None,
                        liked_model: str = None, rejected_models: list = None,
+                       rejected_message_ids: list = None,
                        n_turns: int = None, sel_session_id: str = None):
     """Record a single turn (user or model) to the per-assigned-session CSV."""
 
@@ -33,9 +34,9 @@ def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
             writer = csv.writer(f, quoting=csv.QUOTE_ALL, escapechar='\\')
             writer.writerow([
                 'timestamp', 'message_id', 'liked_response',
-                'rating_cultural', 'rating_fluency', 'rejected_options',
-                'follow_up', 'topic', 'country',
-                'liked_model', 'rejected_options_models',
+                'rating_cultural', 'rating_fluency', 'rating_contextual',
+                'rejected_options', 'follow_up', 'topic', 'country',
+                'liked_model', 'rejected_options_models', 'rejected_option_message_ids'
             ])
 
     with open(ratings_file, 'a', newline='', encoding='utf-8') as f:
@@ -46,12 +47,14 @@ def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
             reply_to or '',
             rating_cultural if rating_cultural is not None else '',
             rating_fluency  if rating_fluency  is not None else '',
+            rating_contextual if rating_fluency  is not None else '',
             rejected_options if rejected_options else '',
             follow_up or '',
             topic    or '',
             country  or '',
             liked_model or '',
             rejected_models if rejected_models else '',
+            rejected_message_ids if rejected_message_ids else '',
         ])
 
 
@@ -76,7 +79,7 @@ def save_feedback_to_csv(interviewer_message, feedback_message, user_id: str, se
             writer = csv.writer(f, quoting=csv.QUOTE_ALL, escapechar='\\')
             writer.writerow([
                 'timestamp', 'interviewer_message', 'user_feedback',
-                'rating_cultural', 'rating_fluency', 'rejected_options'
+                'rating_cultural', 'rating_fluency', 'rating_fluency', 'rejected_options'
             ])
 
     if interviewer_message:
@@ -92,6 +95,7 @@ def save_feedback_to_csv(interviewer_message, feedback_message, user_id: str, se
     metadata         = feedback_message.metadata if feedback_message and feedback_message.metadata else {}
     rating_cultural  = metadata.get('rating_cultural', '')
     rating_fluency   = metadata.get('rating_fluency', '')
+    rating_contextual   = metadata.get('rating_contextual', '')
     rejected_options = metadata.get('rejected_options', [])
 
     with open(feedback_file, 'a', newline='', encoding='utf-8') as f:
@@ -102,6 +106,7 @@ def save_feedback_to_csv(interviewer_message, feedback_message, user_id: str, se
             feedback_content,
             rating_cultural,
             rating_fluency,
+            rating_contextual,
             rejected_options,
         ])
         

@@ -51,6 +51,7 @@
         let lastChosenCountry   = null;
         let lastRatingCultural  = null;
         let lastRatingFluency   = null;
+        let lastRatingContextual = null;
         let pendingLikeCount    = 0;
         let assignedSessionId   = null;
         let assignedNTurns      = null;
@@ -119,7 +120,7 @@
                 form.innerHTML = `
                     <p>Rate this response</p>
                     <div class="rating-row">
-                        <label>Cultural correctness</label>
+                        <label>Cultural appropriateness</label>
                         <div class="star-group" id="cultural-stars-${uid}">
                             <input type="radio" name="cultural_${uid}" id="c5_${uid}" value="5"><label for="c5_${uid}">★</label>
                             <input type="radio" name="cultural_${uid}" id="c4_${uid}" value="4"><label for="c4_${uid}">★</label>
@@ -138,6 +139,16 @@
                             <input type="radio" name="fluency_${uid}" id="f1_${uid}" value="1"><label for="f1_${uid}">★</label>
                         </div>
                     </div>
+                    <div class="rating-row">
+                        <label>Contextual relevance</label>
+                        <div class="star-group" id="contextual-stars-${uid}">
+                            <input type="radio" name="contextual_${uid}" id="ctx5_${uid}" value="5"><label for="ctx5_${uid}">★</label>
+                            <input type="radio" name="contextual_${uid}" id="ctx4_${uid}" value="4"><label for="ctx4_${uid}">★</label>
+                            <input type="radio" name="contextual_${uid}" id="ctx3_${uid}" value="3"><label for="ctx3_${uid}">★</label>
+                            <input type="radio" name="contextual_${uid}" id="ctx2_${uid}" value="2"><label for="ctx2_${uid}">★</label>
+                            <input type="radio" name="contextual_${uid}" id="ctx1_${uid}" value="1"><label for="ctx1_${uid}">★</label>
+                        </div>
+                    </div>
                     <button class="rating-submit-btn" type="button" disabled>Submit rating</button>
                 `;
                 msgDiv.appendChild(form);
@@ -145,17 +156,20 @@
 
                 const submitBtn = form.querySelector('.rating-submit-btn');
                 function checkReady() {
-                    const hasCultural = form.querySelector(`input[name="cultural_${uid}"]:checked`);
-                    const hasFluency  = form.querySelector(`input[name="fluency_${uid}"]:checked`);
-                    submitBtn.disabled = !(hasCultural && hasFluency);
+                    const hasCultural   = form.querySelector(`input[name="cultural_${uid}"]:checked`);
+                    const hasFluency    = form.querySelector(`input[name="fluency_${uid}"]:checked`);
+                    const hasContextual = form.querySelector(`input[name="contextual_${uid}"]:checked`);
+                    submitBtn.disabled = !(hasCultural && hasFluency && hasContextual);
                 }
                 form.querySelectorAll('input[type="radio"]').forEach(r => r.addEventListener('change', checkReady));
 
                 submitBtn.addEventListener('click', async () => {
                     const cultural = parseInt(form.querySelector(`input[name="cultural_${uid}"]:checked`).value, 10);
                     const fluency  = parseInt(form.querySelector(`input[name="fluency_${uid}"]:checked`).value, 10);
+                    const contextual = parseInt(form.querySelector(`input[name="contextual_${uid}"]:checked`).value, 10);
                     lastRatingCultural = cultural;
                     lastRatingFluency  = fluency;
+                    lastRatingContextual = contextual;
                     submitBtn.disabled = true;
                     submitBtn.textContent = 'Submitting…';
 
@@ -172,6 +186,7 @@
                                 rejected_message_ids: lastRejectedMessageIds,
                                 rating_cultural:      cultural,
                                 rating_fluency:       fluency,
+                                rating_contextual:    contextual,
                             }),
                         });
                         const result = await resp.json();
@@ -180,9 +195,9 @@
                         console.warn('Rating submission error:', err);
                     }
 
-                    form.innerHTML = `<span class="rating-done-badge">✓ Rated — cultural: ${cultural}/5 · fluency: ${fluency}/5</span>`;
+                    form.innerHTML = `<span class="rating-done-badge">✓ Rated — cultural: ${cultural}/5 · fluency: ${fluency}/5 · contextual: ${contextual}/5</span>`;
                     if (systemMessage) appendSystemMessage(systemMessage);
-                    resolve({ cultural, fluency });
+                    resolve({ cultural, fluency, contextual });
                 });
             });
         }
@@ -271,7 +286,7 @@
                 scrollToBottom();
             }
 
-            function appendHistoryMessage(role, text, messageId, ratingCultural, ratingFluency) {
+            function appendHistoryMessage(role, text, messageId, ratingCultural, ratingFluency, ratingContextual) {
         if (messageId && seenMessageIds.has(messageId)) return;
         if (messageId) seenMessageIds.add(messageId);
 
@@ -294,8 +309,8 @@
             // Bot message — already rated, show badge instead of like button
             msgDiv.className = 'message bot';
             msgDiv.dataset.msgId = messageId || '';
-            const badge = (ratingCultural && ratingFluency)
-                ? `<span class="rating-done-badge">✓ Rated — cultural: ${ratingCultural}/5 · fluency: ${ratingFluency}/5</span>`
+            const badge = (ratingCultural && ratingFluency && ratingContextual)
+                ? `<span class="rating-done-badge">✓ Rated — cultural: ${ratingCultural}/5 · fluency: ${ratingFluency}/5 · contextual: ${ratingContextual}/5</span>`
                 : '';
             msgDiv.innerHTML = `
                 <img src="${imgUrl}" alt="assistant">
@@ -419,6 +434,7 @@
                         reply_to:         lastLikedMessageText,
                         rating_cultural:  lastRatingCultural,
                         rating_fluency:   lastRatingFluency,
+                        rating_contextual:   lastRatingContextual,
                         rejected_options: lastRejectedOptions,
                         topic:            lastChosenTopic,
                         country:          lastChosenCountry,
@@ -520,7 +536,8 @@
                                             msg.content,
                                             msg.id,
                                             msg.rating_cultural,
-                                            msg.rating_fluency
+                                            msg.rating_fluency,
+                                            msg.rating_contextual
                                         );
                                     });
                                     // Scroll to bottom after replaying all history
