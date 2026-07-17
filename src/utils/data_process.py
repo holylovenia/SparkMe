@@ -47,7 +47,7 @@ def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
             reply_to or '',
             rating_cultural if rating_cultural is not None else '',
             rating_fluency  if rating_fluency  is not None else '',
-            rating_contextual if rating_fluency  is not None else '',
+            rating_contextual if rating_contextual  is not None else '',
             rejected_options if rejected_options else '',
             follow_up or '',
             topic    or '',
@@ -79,7 +79,7 @@ def save_feedback_to_csv(interviewer_message, feedback_message, user_id: str, se
             writer = csv.writer(f, quoting=csv.QUOTE_ALL, escapechar='\\')
             writer.writerow([
                 'timestamp', 'interviewer_message', 'user_feedback',
-                'rating_cultural', 'rating_fluency', 'rating_fluency', 'rejected_options'
+                'rating_cultural', 'rating_fluency', 'rating_contextual', 'rejected_options'
             ])
 
     if interviewer_message:
