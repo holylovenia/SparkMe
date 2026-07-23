@@ -519,11 +519,11 @@
         // INITIALIZATION
         // ===================================================================
         document.addEventListener('DOMContentLoaded', async function () {
-            assignedSessionId = {{ session_id | tojson }
+            assignedSessionId = {{ session_id | tojson }};
+            assignedNTurns = {{ n_turns | tojson }};
+            lastChosenTopic = {{ topic | tojson }};
+            lastChosenCountry = {{ country | tojson }};
         };
-        assignedNTurns = {{ n_turns | tojson }};
-        lastChosenTopic = {{ topic | tojson }};
-        lastChosenCountry = {{ country | tojson }};
 
         window.SESSION_STORAGE_KEY = `session_token_${assignedSessionId}`;
 
