@@ -253,11 +253,16 @@ class Interviewer(BaseAgent, Participant):
             e.startswith('<Interviewer>') for e in chat_history_events
         )
 
+        # instruction = (
+        #     f"You are conducting an interview"
+        #     f"with a participant that is interested about {country}. "
+        #     f"Based on the conversation so far, give a natural response "
+        #     f"that might deepen their understanding of {country}."
+        # )
         instruction = (
-            f"You are conducting an interview"
-            f"with a participant that is interested about {country}. "
-            f"Based on the conversation so far, give a natural response "
-            f"that might deepen their understanding of {country}."
+            f"أنت تُجري مقابلة مع مشارك مهتم بمعرفة المزيد عن {country}. "
+            f"استنادًا إلى المحادثة حتى الآن، قدّم ردًا طبيعيًا "
+            f"يساعد على تعميق فهمه لـ {country}"
         )
 
         return (
