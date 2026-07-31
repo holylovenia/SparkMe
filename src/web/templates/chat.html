@@ -16,24 +16,25 @@
         <div class="instructions-panel" id="instructions-panel">
             <h3>📋 Interview Instructions</h3>
             <ul>
-                <li><strong>Type</strong> your responses in the text box below</li>
-                <li>Start a cultural conversation about <strong>{{ topic }} in {{ country }}</strong>. For example, you
-                    could ask:: <strong>"{{ first_prompt }}"</strong> You are welcome to rephrase this prompt in your
-                    own words and ask follow-up questions, or create your own engaging prompt that encourages a
-                    discussion about the topic.</li>
-                <li><strong>Please write in Arabic your regional dialect </strong>. Be creative with your prompts!</li>
-                <li>Some code-switching is fine (mixing in a word or phrase in English or French), but please
-                    <strong>avoid writing fully in English or French</strong>.
+                <li>Imagine you are interacting with a model like ChatGPT/Gemini/Claude, and <strong>type</strong> your input in the text box below.</li>
+                <li>The conversation should be about <strong>{{ topic }} in {{ country }}</strong>.</li>
+                <li>
+                    Here is an example of a conversation starter:
+                    <strong>"{{ first_prompt }}"</strong>
                 </li>
-                <li>Continue until you are informed that the session has ended</li>
-                <li>,<strong>Note:</strong> Please select the best answer from the four responses provided. After
-                    choosing the best response,
-                    rate it according to the specified evaluation criteria.
-                    Please note that all output responses are expected to be in Modern Standard Arabic (MSA). A
-                    response that is not in MSA can be the best answer if it addresses the question more effectively
-                    than the others. In other words, select the best overall response based on how well it answers the
-                    question, and evaluate its MSA fluency separately according to the MSA criterion.
+                <li>
+                    <ul>
+                        <li><strong>Please write in your native Arabic dialect</strong>. Be creative with your prompts!</li>
+                        <li>You are free to use the conversation starter as is (after translating it into your native dialect).</li>
+                        <li>You can also rephrase it using your own words or create your own engaging prompt that encourages discussion about the topic.</li>
+                        <li>You are also allowed to write a few words or phrases in languages other than your dialect, such as English or French. However, please <strong>avoid writing much in English or French</strong>.</li>
+                    </ul>
                 </li>
+                <li>
+                    After each input, select the response that <strong>best addresses your input</strong> by clicking the 👍 button, then rate it on <strong>MSA Fluency</strong> and <strong>Cultural Appropriateness and Respectfulness</strong>. One star is the lowest rating, five stars is the highest. You can check the rubric's definitions and examples <a href="https://docs.google.com/spreadsheets/d/1KwRvVFULi1fplRMWKIABSBiHh4L4AzdyM1Fop5R47JE/edit?usp=sharing" target="_blank" style="margin: 0; padding: 1px 2px;">here</a>.
+                </li>
+                <li>Please note that all output responses are expected to be in Modern Standard Arabic (MSA). A response that is not in MSA can still be the best response if it addresses the input more effectively than the others — select the best overall response based on how well it responds, and rate its MSA fluency separately.</li>
+                <li>Continue the conversation based on the previous inputs and responses, until you are informed that the session has ended.</li>
             </ul>
         </div>
 
@@ -523,7 +524,6 @@
             assignedNTurns = {{ n_turns | tojson }};
             lastChosenTopic = {{ topic | tojson }};
             lastChosenCountry = {{ country | tojson }};
-        };
 
         window.SESSION_STORAGE_KEY = `session_token_${assignedSessionId}`;
 

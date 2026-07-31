@@ -491,16 +491,6 @@ class InterviewSession:
             "execution_log",
             f"[CHAT_HISTORY] {message.role}'s message has been added to chat history."
         )
-    
-    def get_system_guidance(self, message_id: str) -> str | None:
-        if not self._first_guidance_given:
-            self._first_guidance_given = True
-            guidance = "Please start the conversation with a prompt related to the topic you chose."
-        else:
-            guidance = f"Consider responding with: {random.sample(self._follow_up_options, 1)[0]}"
-
-        self._last_follow_up = guidance   # will be read on the next user message
-        return guidance
 
     def get_system_guidance(self, message_id: str) -> str | None:
         if not self._first_guidance_given:
@@ -553,12 +543,12 @@ class InterviewSession:
                     continue
 
             if indices:
-                chosen = " OR ".join([self._follow_up_options[index] for index in indices])
+                chosen = "\n".join([f'- {self._follow_up_options[index]}' for index in indices])
                 SessionLogger.log_to_file(
                     "execution_log",
                     f"[GUIDANCE] LLM selected indices {indices}, picked: {chosen}"
                 )
-                return f"Need idea to respond? You can consider either of these follow-ups: {chosen}"
+                return f"Need idea to respond? You can consider either of these follow-ups:\n{chosen}"
 
         except Exception as e:
             SessionLogger.log_to_file(

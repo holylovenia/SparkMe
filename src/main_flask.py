@@ -32,6 +32,13 @@ load_dotenv(override=True)
 # CONFIGURATION
 # =============================================================================
 
+COUNTRIES_ENG_TO_MSA = {
+    'Tunisia': 'تونس', 'Jordan': 'الأردن', 'Egypt': 'مصر', 'Lebanon': 'لبنان',
+    'Algeria': 'الجزائر', 'Morocco': 'المغرب', 'KSA': 'السعودية', 'Yemen': 'اليمن',
+    'UAE': 'الإمارات', 'Syria': 'سوريا', 'Palestine': 'فلسطين', 'Sudan': 'السودان',
+    'Libya': 'ليبيا',
+}
+
 SESSION_TIMEOUT_SECONDS = 3600  # 1 hour
 START_TIME = time.time()
 
@@ -109,11 +116,10 @@ def load_user_sessions(user_id: str) -> list:
         return json.load(f)
 
 def save_user_sessions(user_id: str, sessions: list):
-    """Save session list for a user"""
     path = get_user_sessions_path(user_id)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'w', encoding='utf-8') as f:
-        json.dump(sessions, f, indent=2)
+        json.dump(sessions, f, indent=2, ensure_ascii=False)
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -497,7 +503,7 @@ def unified_chat():
                            session_id=session_id,
                            country=country,
                            topic=topic,
-                           first_prompt=first_prompt,
+                           first_prompt=first_prompt.replace(country, COUNTRIES_ENG_TO_MSA.get(country, country)),
                            n_turns=int(n_turns))
 
 # =============================================================================

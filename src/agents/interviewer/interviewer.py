@@ -1,4 +1,5 @@
 import asyncio
+import csv
 import os
 import random
 import re
@@ -226,6 +227,53 @@ class Interviewer(BaseAgent, Participant):
 
         self._turn_to_respond = False
 
+    def get_event_stream_str_from_csv(self, filter: List[Dict[str, str]] = None, as_list: bool = False):
+        '''Drop-in replacement for BaseAgent.get_event_stream_str that loads chat
+        history from the ratings CSV written by save_rating_to_csv(), instead of
+        the in-memory event stream (which would otherwise include rejected
+        candidate responses from the other engines).
+
+        For each row: content comes from 'liked_response', and sender is derived
+        from 'liked_model' ("user" -> "User", anything else -> "Interviewer").
+        '''
+        session = self.interview_session
+
+        sel_session_id = getattr(session, 'sel_session_id', None)
+        session_id     = getattr(session, 'session_id', None)
+        user_id        = getattr(session, 'user_id', None)
+        country        = getattr(session, 'country', None)
+        topic          = getattr(session, 'topic', None)
+        n_turns        = getattr(session, 'max_turns', None)
+
+        def _safe(s):
+            return re.sub(r'[^\w\-]', '_', str(s)) if s is not None else 'unknown'
+
+        filename = (
+            f"{_safe(sel_session_id if sel_session_id is not None else session_id)}_"
+            f"{_safe(country)}_{_safe(topic)}_{_safe(n_turns)}.csv"
+        )
+        ratings_file = os.path.join(
+            os.getenv('LOGS_DIR', 'logs'), user_id, 'ratings', filename
+        )
+
+        events = []
+        if not os.path.exists(ratings_file):
+            return events if as_list else ""
+
+        with open(ratings_file, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                liked_response = row.get('liked_response', '')
+                liked_model    = row.get('liked_model', '')
+                if not liked_response:
+                    continue
+                sender = "User" if liked_model == "user" else "Interviewer"
+                events.append(f"<{sender}>\n{liked_response}\n</{sender}>")
+
+        if as_list:
+            return events
+        return "\n".join(events)
+
     def _get_prompt(self):
     # Gets the prompt for the interviewer — chat history only.
 
@@ -233,13 +281,7 @@ class Interviewer(BaseAgent, Participant):
         country = getattr(self.interview_session, 'country', 'the chosen country')
 
         # Collect all user and interviewer messages in order
-        chat_history_events = self.get_event_stream_str(
-            [
-                {"sender": "Interviewer", "tag": "message"},
-                {"sender": "User",        "tag": "message"},
-            ],
-            as_list=True
-        )
+        chat_history_events = self.get_event_stream_str_from_csv(as_list=True)
 
         recent_events = (
             chat_history_events[-self._max_events_len:]
@@ -260,16 +302,15 @@ class Interviewer(BaseAgent, Participant):
         #     f"that might deepen their understanding of {country}."
         # )
         instruction = (
-            f"أنت تُجري مقابلة مع مشارك مهتم بمعرفة المزيد عن {country}. "
-            f"استنادًا إلى المحادثة حتى الآن، قدّم ردًا طبيعيًا "
-            f"يساعد على تعميق فهمه لـ {country}"
+            f"You are having a chat with a participant. "
+            f"Based on the conversation so far, give a natural response "
+            f"that might deepen their understanding."
         )
 
         return (
             f"{instruction}\n\n"
             f"<conversation_history>\n{chat_history_str}\n</conversation_history>\n\n"
-            f"Respond with only your next interview message, "
-            f"without any preamble or tags."
+            f"Respond to the questions in Standard Arabic, irrespective of the language that the user is using. Do not use any preamble or tags."
         )
 
     # def _format_strategic_questions(self) -> str:
