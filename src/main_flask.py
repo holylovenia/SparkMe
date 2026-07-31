@@ -39,7 +39,7 @@ COUNTRIES_ENG_TO_MSA = {
     'Libya': 'ليبيا',
 }
 
-SESSION_TIMEOUT_SECONDS = 3600  # 1 hour
+SESSION_TIMEOUT_SECONDS = 1800  # 1 hour
 START_TIME = time.time()
 
 class AppConfig:
@@ -253,6 +253,7 @@ class SessionWrapper:
         self.interview_session = interview_session
         self.user_id = user_id
         self.created_at = time.time()
+        self.last_activity = time.time()
 
 active_sessions: Dict[str, SessionWrapper] = {}
 last_messages_by_session: Dict[str, Dict[str, str]] = {}
@@ -358,10 +359,15 @@ def create_interview_session(user_id: str,
 
 def get_session(session_token: str) -> Optional[InterviewSession]:
     wrapper = active_sessions.get(session_token)
+    if wrapper is not None:
+        wrapper.last_activity = time.time()
     return wrapper.interview_session if wrapper is not None else None
 
 def get_session_wrapper(session_token: str) -> Optional[SessionWrapper]:
-    return active_sessions.get(session_token)
+    wrapper = active_sessions.get(session_token)
+    if wrapper is not None:
+        wrapper.last_activity = time.time()
+    return wrapper
 
 # =============================================================================
 # AUTHENTICATION ROUTES (NO @login_required)
@@ -1102,22 +1108,28 @@ def wait_for_agent_response(session, timeout: float = 60.0, poll_interval: float
 # SESSION CLEANUP
 # =============================================================================
 
+# cleanup_old_sessions() — evict on inactivity, and evict promptly
+# once the in-process loop has already died
 def cleanup_old_sessions():
     current_time = time.time()
     to_remove = []
 
     for token, wrapper in list(active_sessions.items()):
-        age = current_time - wrapper.created_at
         session = wrapper.interview_session
+        idle_age = current_time - getattr(wrapper, 'last_activity', wrapper.created_at)
 
-        # Remove sessions older than timeout
-        if age > SESSION_TIMEOUT_SECONDS:
+        # Session loop already exited (e.g. inactivity timeout, farewell) —
+        # no point keeping it around waiting for more activity
+        if not session.session_in_progress and not getattr(session, '_farewell_done', False):
+            if idle_age > 120:  # small grace window for in-flight requests
+                to_remove.append(token)
+                continue
+
+        if idle_age > SESSION_TIMEOUT_SECONDS:
             to_remove.append(token)
             continue
 
-        # Remove sessions that ended (farewell done) more than 10 minutes ago
-        if getattr(session, '_farewell_done', False) or \
-                getattr(session, '_farewell_rated', False):
+        if getattr(session, '_farewell_done', False) or getattr(session, '_farewell_rated', False):
             ended_age = current_time - getattr(wrapper, 'ended_at', current_time)
             if ended_age > 600:
                 to_remove.append(token)
@@ -1129,7 +1141,7 @@ def cleanup_old_sessions():
             print(f"[Cleanup] Removed session {token} (user: {wrapper.user_id})")
 
     if to_remove:
-        print(f"[Cleanup] Removed {len(to_remove)} sessions. Active: {len(active_sessions)}")
+        print(f"[Cleanup] Removed {len(to_remove)} sessions.")
 
 def start_cleanup_thread():
     """Start background thread for session cleanup"""

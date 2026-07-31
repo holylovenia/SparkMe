@@ -190,6 +190,7 @@
                     submitBtn.textContent = 'Submitting…';
 
                     let systemMessage = null;
+                    let ratingSaved = false;
                     try {
                         const resp = await fetch('/api/submit-rating', {
                             method: 'POST',
@@ -206,9 +207,34 @@
                             }),
                         });
                         const result = await resp.json();
-                        if (result.success && result.system_message) systemMessage = result.system_message;
+                        if (result.success) {
+                            ratingSaved = true;
+                            if (result.system_message) systemMessage = result.system_message;
+                        }
                     } catch (err) {
                         console.warn('Rating submission error:', err);
+                    }
+
+                    // Once the rating is durably recorded, permanently clear this turn's
+                    // candidate messages (the picked one + all rejected siblings) from the
+                    // backend's live message buffer. Without this, /api/get-messages keeps
+                    // re-delivering every candidate from every past turn forever — harmless
+                    // mid-session (seenMessageIds swallows repeats), but it means every
+                    // historical option-set reappears after a refresh, since seenMessageIds
+                    // resets to empty on page load.
+                    if (ratingSaved) {
+                        try {
+                            await fetch('/api/acknowledge-messages', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    session_token: sessionToken,
+                                    message_ids: [messageId, ...lastRejectedMessageIds],
+                                }),
+                            });
+                        } catch (ackErr) {
+                            console.warn('Failed to acknowledge rated messages:', ackErr);
+                        }
                     }
 
                     form.innerHTML = `<span class="rating-done-badge">✓ Rated — cultural: ${cultural}/5 · fluency: ${fluency}/5 · contextual: ${contextual}/5</span>`;
@@ -369,6 +395,14 @@
 
                 const data = await response.json();
 
+                // inside pollForMessages(), after `const data = await response.json();`
+                if (data.success === false || (data.session_active === false && !data.session_completed)) {
+                    clearInterval(pollingInterval);
+                    pollingInterval = null;
+                    updateStatus('Session timed out — please refresh to continue.');
+                    return;
+                }
+
                 if (data.success && data.messages && data.messages.length > 0) {
                     let hadNewBotMessage = false;
 
@@ -521,88 +555,103 @@
         // ===================================================================
         document.addEventListener('DOMContentLoaded', async function () {
             assignedSessionId = {{ session_id | tojson }};
-            assignedNTurns = {{ n_turns | tojson }};
-            lastChosenTopic = {{ topic | tojson }};
+            assignedNTurns    = {{ n_turns | tojson }};
+            lastChosenTopic   = {{ topic | tojson }};
             lastChosenCountry = {{ country | tojson }};
 
-        window.SESSION_STORAGE_KEY = `session_token_${assignedSessionId}`;
+            window.SESSION_STORAGE_KEY = `session_token_${assignedSessionId}`;
 
-        // Try to reconnect to an existing session from a previous load
-        const stored = loadSessionToken();
-        if (stored) {
-            try {
-                const check = await fetchWithTimeout(
-                    `/api/get-messages?session_token=${stored}`, {}, 5000
-                );
-                if (check.ok) {
-                    sessionToken = stored;
-                    sessionStartTime = Date.now();
-                    updateStatus(`Reconnected — ${lastChosenTopic} · ${lastChosenCountry}`);
+            let reconnected = false;
 
-                    // ── Replay history from CSV before resuming polling
-                    try {
-                        const histResp = await fetchWithTimeout(
-                            `/api/session-history?session_token=${stored}`, {}, 8000
-                        );
-                        const histData = await histResp.json();
-                        if (histData.success && histData.messages.length > 0) {
-                            histData.messages.forEach(msg => {
-                                appendHistoryMessage(
-                                    msg.role,
-                                    msg.content,
-                                    msg.id,
-                                    msg.rating_cultural,
-                                    msg.rating_fluency,
-                                    msg.rating_contextual
-                                );
-                            });
-                            // Scroll to bottom after replaying all history
-                            scrollToBottom();
+            // Try to reconnect to an existing session from a previous load
+            const stored = loadSessionToken();
+            if (stored) {
+                try {
+                    const check = await fetchWithTimeout(
+                        `/api/get-messages?session_token=${stored}`, {}, 5000
+                    );
+                    const checkData = check.ok ? await check.json() : null;
+
+                    if (check.ok && checkData && checkData.session_active) {
+                        sessionToken     = stored;
+                        sessionStartTime = Date.now();
+                        updateStatus(`Reconnected — ${lastChosenTopic} · ${lastChosenCountry}`);
+
+                        // ── Replay history from CSV before resuming polling
+                        try {
+                            const histResp = await fetchWithTimeout(
+                                `/api/session-history?session_token=${stored}`, {}, 8000
+                            );
+                            const histData = await histResp.json();
+                            if (histData.success && histData.messages.length > 0) {
+                                histData.messages.forEach(msg => {
+                                    appendHistoryMessage(
+                                        msg.role,
+                                        msg.content,
+                                        msg.id,
+                                        msg.rating_cultural,
+                                        msg.rating_fluency,
+                                        msg.rating_contextual
+                                    );
+                                });
+                                scrollToBottom();
+                            }
+                        } catch (histErr) {
+                            console.warn('Could not replay history:', histErr);
                         }
-                    } catch (e) {
-                        console.warn('Could not load history:', e);
-                    }
 
+                        reconnected = true;
+                        if (!pollingInterval) pollingInterval = setInterval(pollForMessages, 1500);
+                        pollForMessages();
+
+                    } else if (check.ok && checkData && checkData.session_completed) {
+                        // Legitimately finished — don't try to resurrect it
+                        clearSessionToken();
+                        updateStatus('This session has already been completed.');
+                    } else {
+                        // Dead on the backend (timed out mid-generation, or evicted).
+                        // Fall through below to start a fresh backend session against
+                        // the same sel_session_id — history is preserved server-side.
+                        clearSessionToken();
+                        updateStatus('Previous session expired — starting a new one…');
+                    }
+                } catch (e) {
+                    clearSessionToken();
+                    updateStatus('Could not reconnect — starting a new session…');
+                }
+            }
+
+            if (reconnected) return;   // ← the missing gate that caused the double-init
+
+            // No valid stored session (or it was dead) — start a new one
+            updateStatus('Starting session…');
+            try {
+                const resp = await fetchWithTimeout('/api/start-session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_id: assignedSessionId,
+                        country:    lastChosenCountry,
+                        topic:      lastChosenTopic,
+                        n_turns:    assignedNTurns,
+                    }),
+                }, 15000);
+                const data = await resp.json();
+                if (data.success) {
+                    sessionToken     = data.session_token;
+                    saveSessionToken(sessionToken);
+                    sessionStartTime = Date.now();
+                    updateStatus(`Session ready — ${lastChosenTopic} · ${lastChosenCountry}`);
                     if (!pollingInterval) pollingInterval = setInterval(pollForMessages, 1500);
                     pollForMessages();
-                    return;
+                } else {
+                    updateStatus('Failed to start session: ' + (data.error || 'Unknown error'));
+                    console.error('start-session failed:', data);
                 }
-            } catch (e) {
-                console.warn('Stored session invalid, starting fresh:', e);
+            } catch (err) {
+                updateStatus('Error starting session — try refreshing or going back.');
+                console.error('Error starting session:', err);
             }
-            clearSessionToken();
-        }
-
-        // No valid stored session — start a new one
-        updateStatus('Starting session…');
-        try {
-            const resp = await fetchWithTimeout('/api/start-session', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    session_id: assignedSessionId,
-                    country: lastChosenCountry,
-                    topic: lastChosenTopic,
-                    n_turns: assignedNTurns,
-                }),
-            }, 15000);
-            const data = await resp.json();
-            if (data.success) {
-                sessionToken = data.session_token;
-                saveSessionToken(sessionToken);
-                sessionStartTime = Date.now();
-                saveSessionToken(sessionToken);
-                updateStatus(`Session ready — ${lastChosenTopic} · ${lastChosenCountry}`);
-                if (!pollingInterval) pollingInterval = setInterval(pollForMessages, 1500);
-                pollForMessages();
-            } else {
-                updateStatus('Failed to start session: ' + (data.error || 'Unknown error'));
-                console.error('start-session failed:', data);
-            }
-        } catch (err) {
-            updateStatus('Error starting session — try refreshing or going back.');
-            console.error('Error starting session:', err);
-        }
         });
     </script>
 </body>

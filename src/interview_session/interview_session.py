@@ -452,9 +452,9 @@ class InterviewSession:
             metadata=metadata,
         )
 
-        if role == "User":
+        if role in ("User", "Interviewer"):
             self._last_message_time = message.timestamp
-        elif role == "Interviewer" and self._last_user_message is not None:
+        if role == "Interviewer" and self._last_user_message is not None:
             self._last_user_message = None
 
         if message_type == MessageType.SKIP or message_type == MessageType.CONVERSATION:
