@@ -29,8 +29,6 @@ from src.content.memory_bank.memory import Memory
 from src.content.question_bank.question_bank_vector_db import QuestionBankVectorDB
 from src.interview_session.prompts.conversation_summarize import summarize_conversation
 from src.utils.token_tracker import TokenUsageTracker
-# Guidance engine — uses MODEL_NAME_1 to select contextually relevant follow-ups
-from src.utils.llm.engines import get_engine as _get_engine
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -91,16 +89,11 @@ class InterviewSession:
         else:
             BaseAgent.use_baseline = \
                 os.getenv("USE_BASELINE_PROMPT", "false").lower() == "true"
-
-        self._guidance_engine = _get_engine(
-            model_name=os.getenv("MODEL_NAME_1", "lipsum:model-1")
-        )
         
         # User setup
         self.user_id = user_config.get("user_id", "default_user")
         self._initial_additional_context_path = interview_config.get("additional_context_path", None)
         self._interview_description = interview_config.get("interview_description", "any topic")
-        self._follow_up_options = self._get_follow_up_options()
         self._opening_topics = self._get_opening_topics()
         self._countries = self._get_countries()
         self._response_model_map: Dict[str, str] = {}   # message_id → model_name
@@ -168,7 +161,6 @@ class InterviewSession:
         self._session_ending = False
         self._farewell_done  = False
         self._farewell_rated = False
-        self._last_follow_up = ""
 
         # Report auto-update states
         self.auto_report_update_in_progress = False
@@ -378,9 +370,6 @@ class InterviewSession:
             #         log_level="info"
             #     )
 
-    def _get_follow_up_options(self, data_path: str = "/home/holy/projects/SparkMe/data/data/follow-ups.csv") -> list[str]:
-        return pd.read_csv(data_path)['follow-up'].tolist()
-
     def _get_opening_topics(self, data_path: str = "/home/holy/projects/SparkMe/data/data/topics.csv") -> list[str]:
         return pd.read_csv(data_path)['topic'].tolist()
 
@@ -458,7 +447,7 @@ class InterviewSession:
             self._last_user_message = None
 
         if message_type == MessageType.SKIP or message_type == MessageType.CONVERSATION:
-            # User messages → write to ratings CSV immediately with last follow-up
+            # User messages → write to ratings CSV immediately
             if role == "User":
                 save_rating_to_csv(
                     session_token="",
@@ -470,7 +459,6 @@ class InterviewSession:
                     rejected_options=[],
                     user_id=self.user_id,
                     session_id=self.session_id,
-                    follow_up=self._last_follow_up,
                     topic=self.topic,
                     country=self.country,
                     liked_model="user",        # signals this row is a user turn
@@ -479,7 +467,6 @@ class InterviewSession:
                     sel_session_id=self.sel_session_id,
                     n_turns=self.max_turns,
                 )
-                self._last_follow_up = ""      # reset — consumed by this user turn
 
             # Interviewer messages are recorded via submit_rating when the user likes one
 
@@ -496,69 +483,7 @@ class InterviewSession:
         if not self._first_guidance_given:
             self._first_guidance_given = True
             return "Please start the conversation with a prompt related to the topic you chose."
-
-        # Build a compact conversation summary for context
-        recent_turns = []
-        for msg in self.chat_history[-6:]:
-            if msg.type == MessageType.CONVERSATION:
-                prefix = "User" if msg.role == "User" else "Assistant"
-                recent_turns.append(f"{prefix}: {msg.content}")
-        conversation_str = "\n".join(recent_turns) if recent_turns else "No conversation yet."
-
-        # Format the full options list for the prompt
-        options_str = "\n".join(
-            f"{i+1}. {opt}" for i, opt in enumerate(self._follow_up_options)
-        )
-
-        prompt = f"""
-        You are helping guide a user in a cultural interview conversation about \"{self.topic}\" in {self.country}.
-
-        Here is the recent conversation:
-        <conversation>
-        {conversation_str}
-        </conversation>
-
-        Below is a numbered list of possible follow-up prompts that could be suggested to the user for their next message:
-        <options>
-        {options_str}
-        </options>
-
-        Select the 3 most contextually relevant and culturally appropriate options from the list above, given the conversation so far.
-        Reply with ONLY the numbers of your chosen 3 options, comma-separated. Example: 3,7,12
-        Do not explain. Do not add any other text.
-        """
-
-        try:
-            response = self._guidance_engine.invoke(prompt)
-            raw = response.content if hasattr(response, 'content') else str(response)
-
-            # Parse the returned numbers
-            indices = []
-            for token in raw.replace(' ', '').split(','):
-                try:
-                    idx = int(token.strip()) - 1  # convert to 0-based
-                    if 0 <= idx < len(self._follow_up_options):
-                        indices.append(idx)
-                except ValueError:
-                    continue
-
-            if indices:
-                chosen = "\n".join([f'- {self._follow_up_options[index]}' for index in indices])
-                SessionLogger.log_to_file(
-                    "execution_log",
-                    f"[GUIDANCE] LLM selected indices {indices}, picked: {chosen}"
-                )
-                return f"Need idea to respond? You can consider either of these follow-ups:\n{chosen}"
-
-        except Exception as e:
-            SessionLogger.log_to_file(
-                "execution_log",
-                f"[GUIDANCE] LLM guidance failed, falling back to random: {e}",
-                log_level="warning"
-            )
-
-        # Fallback: random pick
-        return f"Need idea to respond? You can consider this follow-up: {random.choice(self._follow_up_options)}"
+        return None
 
     async def trigger_farewell(self):
         """Deliver one final interviewer turn then mark the session closed."""

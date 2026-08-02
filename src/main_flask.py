@@ -627,7 +627,6 @@ def submit_rating():
         rejected_options=rejected_options,
         user_id=session.user_id,
         session_id=session.session_id,
-        follow_up="",              # ← follow_up only lives on user rows now
         topic=topic,
         country=country,
         liked_model=liked_model,
@@ -835,7 +834,6 @@ def session_history():
             for i, row in enumerate(reader):
                 liked_model    = row.get('liked_model', '')
                 liked_response = row.get('liked_response', '')
-                follow_up      = row.get('follow_up', '')
 
                 if not liked_response:
                     continue
@@ -847,13 +845,6 @@ def session_history():
                         'role':    'User',
                         'content': liked_response,
                     })
-                    # If a follow-up guidance was shown after this user turn
-                    if follow_up:
-                        messages.append({
-                            'id':      f"history_system_{i}",
-                            'role':    'System',
-                            'content': follow_up,
-                        })
                 else:
                     # Bot turn — show as already-rated (no like button needed)
                     rating_c = row.get('rating_cultural', '')

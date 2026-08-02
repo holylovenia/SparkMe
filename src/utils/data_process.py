@@ -11,7 +11,7 @@ from src.interview_session.session_models import Message
 def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
                        rating_cultural, rating_fluency, rating_contextual,
                        rejected_options: list, user_id: str, session_id: str,
-                       follow_up: str = None, topic: str = None, country: str = None,
+                       topic: str = None, country: str = None,
                        liked_model: str = None, rejected_models: list = None,
                        rejected_message_ids: list = None,
                        n_turns: int = None, sel_session_id: str = None):
@@ -49,7 +49,7 @@ def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
             rating_fluency  if rating_fluency  is not None else '',
             rating_contextual if rating_contextual  is not None else '',
             rejected_options if rejected_options else '',
-            follow_up or '',
+            '',                       # follow_up — feature removed, always empty
             topic    or '',
             country  or '',
             liked_model or '',
