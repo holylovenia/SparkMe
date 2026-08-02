@@ -94,6 +94,12 @@ class InterviewSession:
         self.user_id = user_config.get("user_id", "default_user")
         self._initial_additional_context_path = interview_config.get("additional_context_path", None)
         self._interview_description = interview_config.get("interview_description", "any topic")
+        self._session_ending = False
+        self._farewell_done  = False
+        self._farewell_rated = False
+        self._resume_in_flight = False   # guards post-reconnect interviewer trigger
+        self._last_resume_check    = 0.0     # cooldown on CSV progress re-reads
+        self._resume_candidate_since = None  # confirmation window for the trigger
         self._opening_topics = self._get_opening_topics()
         self._countries = self._get_countries()
         self._response_model_map: Dict[str, str] = {}   # message_id → model_name
@@ -294,25 +300,23 @@ class InterviewSession:
 
     async def _notify_participants(self, message: Message):
         """Notify subscribers asynchronously"""
-        # Gets subscribers for the user that sent the message.
         subscribers = self._subscriptions.get(message.role, [])
-        SessionLogger.log_to_file(
-            "execution_log", 
-            (
-                f"[NOTIFY] Notifying {len(subscribers)} subscribers "
-                f"for message from {message.role}"
-            )
-        )
 
-        # Create independent tasks for each subscriber
         tasks = []
         for sub in subscribers:
-            if self.session_in_progress:
+            if self._accepts_delivery():
                 task = asyncio.create_task(sub.on_message(message))
                 tasks.append(task)
-        
-        # Allow tasks to run concurrently without waiting for each other
-        await asyncio.sleep(0)  # Explicitly yield control
+
+        SessionLogger.log_to_file(
+            "execution_log",
+            f"[NOTIFY] Dispatched to {len(tasks)}/{len(subscribers)} subscribers "
+            f"for message from {message.role} "
+            f"(in_progress={self.session_in_progress}, "
+            f"farewell_done={self._farewell_done})"
+        )
+
+        await asyncio.sleep(0)
 
         # Special handling for user messages after notifying participants
         if message.role == "User":
@@ -336,8 +340,7 @@ class InterviewSession:
                 asyncio.create_task(self._check_and_trigger_report_update())
 
             # Check if max turns reached
-            if self.max_turns is not None and \
-                    self._user_message_count >= self.max_turns:
+            if self._turns_exhausted():
                 SessionLogger.log_to_file(
                     "execution_log",
                     f"[TURNS] Maximum turns ({self.max_turns}) reached. Triggering farewell."
@@ -376,13 +379,35 @@ class InterviewSession:
     def _get_countries(self, data_path: str = "/home/holy/projects/SparkMe/data/data/regions.csv") -> list[str]:
         return pd.read_csv(data_path)['country'].tolist()
 
+    def _turns_exhausted(self) -> bool:
+        """True once the user has taken every turn this session allows."""
+        return (self.max_turns is not None
+                and self._user_message_count >= self.max_turns)
+
+    def _accepts_delivery(self) -> bool:
+        """Whether messages may still be handed to participants.
+
+        session_in_progress goes False the instant trigger_farewell() finishes,
+        but the farewell's own candidates are queued for delivery at that point
+        and still need a rating. A farewell-pending session is not a dead one.
+        """
+        return self.session_in_progress or (
+            self._farewell_done and not self._farewell_rated
+        )
+
     def present_as_options(self, role: str, content: list[str] = [],
                        message_type: str = MessageType.OPTION,
                        metadata: dict = {},
                        model_names: list[str] = []):
         """Present message as options"""
-        if self._farewell_done:   # ← was: if not self.session_in_progress
+        if self._farewell_done:
             return
+
+        # The model just spoke — the session is alive. Without this the
+        # inactivity timer keeps counting from the user's last message, so a
+        # participant deliberating over the four candidates gets the session
+        # killed underneath them mid-rating.
+        self._last_message_time = datetime.now()
 
         prefix = str(uuid.uuid4())
 
@@ -493,10 +518,15 @@ class InterviewSession:
             self._session_ending = True
             SessionLogger.log_to_file("execution_log", "[FAREWELL] Triggering farewell response.")
             await self._interviewer.on_message(None)
+
+            # present_as_options() only *schedules* delivery. Yield so those
+            # tasks run before the finally block clears session_in_progress.
+            for _ in range(3):
+                await asyncio.sleep(0)
         except Exception as e:
             SessionLogger.log_to_file("execution_log", f"[FAREWELL] Error: {str(e)}")
         finally:
-            self._farewell_done     = True
+            self._farewell_done      = True
             self.session_in_progress = False
             if hasattr(self, 'token_tracker'):
                 self.token_tracker.save_final_summary()
@@ -508,6 +538,27 @@ class InterviewSession:
 
         SessionLogger.log_to_file("execution_log", f"[RUN] Starting interview session")
         self.session_in_progress = True
+
+        # Level-triggered limit check. _user_message_count can be restored from
+        # the ratings CSV at construction, so a resumed session may already be
+        # at or past its limit — the edge-triggered check in
+        # _notify_participants only ever fires on increment and would never
+        # catch that.
+        if self._turns_exhausted():
+            if self._farewell_rated:
+                SessionLogger.log_to_file(
+                    "execution_log",
+                    f"[TURNS] Resumed session already complete "
+                    f"({self._user_message_count}/{self.max_turns}). Closing."
+                )
+                self.session_in_progress = False
+                return
+            SessionLogger.log_to_file(
+                "execution_log",
+                f"[TURNS] Resumed session at {self._user_message_count}/"
+                f"{self.max_turns} turns — farewell still owed."
+            )
+            asyncio.create_task(self.trigger_farewell())
 
         try:
             if self.user is not None:

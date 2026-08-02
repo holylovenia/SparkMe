@@ -258,9 +258,12 @@ class SessionWrapper:
 active_sessions: Dict[str, SessionWrapper] = {}
 last_messages_by_session: Dict[str, Dict[str, str]] = {}
 
-def _count_completed_user_turns(user_id: str, sel_session_id, session_id,
-                                 country: str, topic: str, n_turns) -> int:
-    """Count user-turn rows already written to the ratings CSV."""
+def _read_csv_progress(user_id: str, sel_session_id, session_id,
+                       country: str, topic: str, n_turns) -> dict:
+    """Read turn progress from the ratings CSV in one pass.
+
+    Returns {'user_turns': int, 'last_speaker': 'User'|'Interviewer'|None}.
+    """
     import csv as _csv, re as _re
 
     def _safe(s):
@@ -274,20 +277,30 @@ def _count_completed_user_turns(user_id: str, sel_session_id, session_id,
         os.getenv('LOGS_DIR', 'logs'), user_id, 'ratings', filename
     )
 
+    progress = {'user_turns': 0, 'last_speaker': None}
     if not os.path.exists(ratings_file):
-        return 0
+        return progress
 
-    count = 0
     try:
         with open(ratings_file, 'r', encoding='utf-8') as f:
-            reader = _csv.DictReader(f)
-            for row in reader:
+            for row in _csv.DictReader(f):
+                if not row.get('liked_response', ''):
+                    continue
                 if row.get('liked_model', '') == 'user':
-                    count += 1
+                    progress['user_turns'] += 1
+                    progress['last_speaker'] = 'User'
+                else:
+                    progress['last_speaker'] = 'Interviewer'
     except Exception as e:
-        app.logger.warning(f"Could not count user turns from CSV: {e}")
+        app.logger.warning(f"Could not read turn progress from CSV: {e}")
 
-    return count
+    return progress
+
+def _count_completed_user_turns(user_id: str, sel_session_id, session_id,
+                                country: str, topic: str, n_turns) -> int:
+    """Count user-turn rows already written to the ratings CSV."""
+    return _read_csv_progress(user_id, sel_session_id, session_id,
+                              country, topic, n_turns)['user_turns']
 
 def create_interview_session(user_id: str,
                              sel_session_id: str = None,
@@ -321,9 +334,9 @@ def create_interview_session(user_id: str,
         max_turns=effective_max_turns
     )
 
-    # ── Restore turn count from existing CSV so max_turns check is accurate
+    # ── Restore progress from existing CSV so the max_turns check is accurate
     #    after a server restart or session reconnect.
-    completed_user_turns = _count_completed_user_turns(
+    progress = _read_csv_progress(
         user_id=user_id,
         sel_session_id=sel_session_id,
         session_id=interview_session.session_id,
@@ -331,11 +344,26 @@ def create_interview_session(user_id: str,
         topic=topic,
         n_turns=effective_max_turns,
     )
+    completed_user_turns = progress['user_turns']
+
     if completed_user_turns > 0:
         interview_session._user_message_count = completed_user_turns
         app.logger.info(
             f"Restored _user_message_count={completed_user_turns} "
             f"from CSV for sel_session_id={sel_session_id}"
+        )
+
+    # Full turn count reached AND the final model turn was already rated →
+    # this assignment is finished. Mark it so before run() starts, otherwise
+    # the rehydrated session reopens a completed interview.
+    if (effective_max_turns is not None
+            and completed_user_turns >= effective_max_turns
+            and progress['last_speaker'] == 'Interviewer'):
+        interview_session._farewell_done  = True
+        interview_session._farewell_rated = True
+        app.logger.info(
+            f"sel_session_id={sel_session_id} already complete "
+            f"({completed_user_turns}/{effective_max_turns} turns) — marked finished"
         )
 
     wrapper = SessionWrapper(
@@ -546,19 +574,44 @@ def start_session():
     app.logger.info(f"[DEBUG] start-session called by user {current_user.username} "
                     f"session_id={sel_session_id} country={sel_country} topic={sel_topic}")
 
-    # Check if user already has an active session for THIS session_id
-    for token, wrapper in active_sessions.items():
-        if wrapper.user_id == user_id and getattr(wrapper, 'sel_session_id', None) == sel_session_id:
+    # Check if user already has an active session for THIS session_id.
+    # A wrapper whose session has already stopped must NOT be handed back:
+    # it can never respond again, and cleanup_old_sessions() keeps dead
+    # wrappers around for a grace window, so a refresh would otherwise land
+    # on the same corpse indefinitely.
+    for token, wrapper in list(active_sessions.items()):
+        if wrapper.user_id != user_id:
+            continue
+        if getattr(wrapper, 'sel_session_id', None) != sel_session_id:
+            continue
+
+        existing = wrapper.interview_session
+        farewell_pending = (
+            getattr(existing, '_farewell_done', False)
+            and not getattr(existing, '_farewell_rated', False)
+        )
+
+        if existing.session_in_progress or farewell_pending:
             app.logger.info(f"Returning existing session {token} for user {current_user.username}")
             return jsonify({
                 'success': True,
                 'session_token': token,
-                'session_id': wrapper.interview_session.session_id,
+                'session_id': existing.session_id,
                 'user_id': user_id,
                 'username': current_user.username,
                 'message': 'Using existing session',
                 'was_existing': True
             })
+
+        app.logger.info(
+            f"Discarding dead session {token} for sel_session_id={sel_session_id} "
+            f"(in_progress={existing.session_in_progress}, "
+            f"farewell_rated={getattr(existing, '_farewell_rated', False)}) — "
+            f"rebuilding from CSV"
+        )
+        active_sessions.pop(token, None)
+        last_messages_by_session.pop(token, None)
+        break
 
     # Create new session with the selected parameters
     interview_session, session_token = create_interview_session(
@@ -716,9 +769,21 @@ def get_messages():
         elif hasattr(session.user, 'get_and_clear_messages'):
             messages = session.user.get_and_clear_messages() or []
 
+    # Self-healing turn arbitration — covers the case where the one-shot
+    # trigger at reconnect was missed or the session was rebuilt mid-turn.
+    _maybe_resume_interviewer(get_session_wrapper(session_token), messages)
+
     is_session_done = (
         getattr(session, '_farewell_rated', False)
         or session.session_completed
+    )
+
+    # The farewell turn has been delivered but not yet rated. The session is
+    # deliberately no longer "in progress", yet it is emphatically not dead —
+    # its final four candidates are still in the buffer awaiting a rating.
+    farewell_pending = (
+        getattr(session, '_farewell_done', False)
+        and not getattr(session, '_farewell_rated', False)
     )
 
     if is_session_done:
@@ -735,7 +800,8 @@ def get_messages():
         'success': True,
         'messages': messages,
         'session_active': session.session_in_progress,
-        'session_completed': is_session_done
+        'session_completed': is_session_done,
+        'farewell_pending': farewell_pending,
     })
 
 @app.route('/api/acknowledge-messages', methods=['POST'])
@@ -796,10 +862,144 @@ def mark_session_completed():
     save_user_sessions(user_id, sessions)
     return jsonify({'success': True, 'message': f'Session {sel_session_id} marked completed'})
 
+def _has_pending_interviewer_messages(session) -> bool:
+    """True if the live buffer still holds interviewer candidates the client
+    hasn't rated (and therefore hasn't acknowledged) yet."""
+    user = getattr(session, 'user', None)
+    if not user or not hasattr(user, '_message_buffer'):
+        return False
+
+    lock = getattr(user, '_lock', None)
+    if lock:
+        with lock:
+            buf = list(getattr(user, '_message_buffer', []))
+    else:
+        buf = list(getattr(user, '_message_buffer', []))
+
+    return any(m.get('role') == 'Interviewer' for m in buf)
+
+
+def _ensure_interviewer_response(wrapper) -> bool:
+    """Ask the interviewer to produce the next turn after a reconnect.
+
+    Used when the CSV shows the user spoke last but no candidates are pending —
+    i.e. the backend session was evicted mid-turn and the reply was never
+    generated. The interviewer builds its prompt from the ratings CSV
+    (get_event_stream_str_from_csv), so a brand-new session object still
+    produces a contextual response.
+
+    Safe to call repeatedly: guarded by _resume_in_flight plus the
+    interviewer's own _turn_to_respond flag.
+    """
+    session = wrapper.interview_session
+
+    if getattr(session, '_farewell_done', False):
+        return False
+    if getattr(session, '_resume_in_flight', False):
+        return False
+    if getattr(session, '_session_ending', False):
+        return False   # farewell already claimed this turn
+
+    interviewer = getattr(session, '_interviewer', None)
+    if interviewer is None:
+        return False
+    if getattr(interviewer, '_turn_to_respond', False):
+        return False   # already generating
+
+    session._resume_in_flight = True
+
+    async def _run():
+        try:
+            # A freshly created session may still be booting — run() only flips
+            # session_in_progress after augment_session_agenda() completes.
+            for _ in range(100):          # ≈10s
+                if session.session_in_progress:
+                    break
+                await asyncio.sleep(0.1)
+            if not session.session_in_progress:
+                app.logger.warning(
+                    f"[RESUME] Session {wrapper.session_token} never became active — "
+                    f"no interviewer turn generated."
+                )
+                return
+            if session._turns_exhausted():
+                await session.trigger_farewell()
+            else:
+                await interviewer.on_message(None)
+        except Exception as e:
+            app.logger.error(f"[RESUME] Interviewer failed to respond: {e}")
+        finally:
+            session._resume_in_flight = False
+
+    asyncio.run_coroutine_threadsafe(_run(), wrapper.loop)
+    app.logger.info(f"[RESUME] Triggered interviewer turn for {wrapper.session_token}")
+    return True
+
+_RESUME_CHECK_INTERVAL = 3.0   # seconds; also the confirmation window
+
+def _maybe_resume_interviewer(wrapper, buffered_messages) -> None:
+    """Re-check on a cooldown whether the interviewer owes a reply.
+
+    Cheap guards run first — if candidates are buffered or the interviewer is
+    mid-generation, the CSV is never touched. The condition must hold across
+    two checks before firing, which keeps this from racing the normal path,
+    where the user's CSV row lands a few milliseconds before the interviewer
+    sets _turn_to_respond.
+    """
+    if wrapper is None:
+        return
+
+    session = wrapper.interview_session
+
+    if (not session.session_in_progress
+            or getattr(session, '_farewell_done', False)
+            or getattr(session, '_session_ending', False)
+            or getattr(session, '_resume_in_flight', False)
+            or any(m.get('role') == 'Interviewer' for m in buffered_messages)):
+        session._resume_candidate_since = None
+        return
+
+    interviewer = getattr(session, '_interviewer', None)
+    if interviewer is None or getattr(interviewer, '_turn_to_respond', False):
+        session._resume_candidate_since = None
+        return
+
+    now = time.time()
+    if now - getattr(session, '_last_resume_check', 0.0) < _RESUME_CHECK_INTERVAL:
+        return
+    session._last_resume_check = now
+
+    progress = _read_csv_progress(
+        user_id=session.user_id,
+        sel_session_id=getattr(session, 'sel_session_id', None),
+        session_id=session.session_id,
+        country=getattr(session, 'country', None),
+        topic=getattr(session, 'topic', None),
+        n_turns=session.max_turns,
+    )
+
+    if progress['last_speaker'] != 'User':
+        session._resume_candidate_since = None
+        return
+
+    first_seen = getattr(session, '_resume_candidate_since', None)
+    if first_seen is None:
+        session._resume_candidate_since = now
+        return
+    if now - first_seen < _RESUME_CHECK_INTERVAL:
+        return
+
+    session._resume_candidate_since = None
+    _ensure_interviewer_response(wrapper)
+
 @app.route('/api/session-history', methods=['GET'])
 @login_required
 def session_history():
-    """Reconstruct chat history from the ratings CSV for a given assigned session."""
+    """Reconstruct chat history from the ratings CSV for a given assigned session.
+
+    Also reports who spoke last so the client can hand the turn to the right
+    party, and triggers the interviewer if it owes a reply.
+    """
     session_token = request.args.get('session_token')
 
     wrapper = get_session_wrapper(session_token)
@@ -808,7 +1008,7 @@ def session_history():
 
     session = wrapper.interview_session
 
-    import re, csv
+    import re, csv, ast
     def _safe(s):
         return re.sub(r'[^\w\-]', '_', str(s)) if s is not None else 'unknown'
 
@@ -825,9 +1025,18 @@ def session_history():
     ratings_file = os.path.join(ratings_dir, filename)
 
     if not os.path.exists(ratings_file):
-        return jsonify({'success': True, 'messages': []})
+        return jsonify({
+            'success': True,
+            'messages': [],
+            'recorded_message_ids': [],
+            'last_speaker': None,
+            'awaiting_model_response': False,
+        })
 
-    messages = []
+    messages     = []
+    recorded_ids = []
+    last_speaker = None
+
     try:
         with open(ratings_file, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
@@ -838,32 +1047,60 @@ def session_history():
                 if not liked_response:
                     continue
 
+                msg_id = row.get('message_id', '')
+                if msg_id:
+                    recorded_ids.append(msg_id)
+
+                # Rejected siblings from this turn are settled too — they must
+                # never come back as fresh likeable options.
+                raw_rejected = row.get('rejected_option_message_ids', '')
+                if raw_rejected:
+                    try:
+                        parsed = ast.literal_eval(raw_rejected)
+                        if isinstance(parsed, (list, tuple)):
+                            recorded_ids.extend(str(x) for x in parsed)
+                    except (ValueError, SyntaxError):
+                        pass
+
                 if liked_model == 'user':
-                    # User turn
+                    last_speaker = 'User'
                     messages.append({
                         'id':      f"history_user_{i}",
                         'role':    'User',
                         'content': liked_response,
                     })
                 else:
-                    # Bot turn — show as already-rated (no like button needed)
-                    rating_c = row.get('rating_cultural', '')
-                    rating_f = row.get('rating_fluency',  '')
-                    rating_ctx = row.get('rating_contextual',  '')
+                    last_speaker = 'Interviewer'
                     messages.append({
-                        'id':             f"history_bot_{i}",
-                        'role':           'Interviewer',
-                        'content':        liked_response,
-                        'already_rated':  True,
-                        'rating_cultural': rating_c,
-                        'rating_fluency':  rating_f,
-                        'rating_contextual': rating_ctx,
+                        'id':                f"history_bot_{i}",
+                        'role':              'Interviewer',
+                        'content':           liked_response,
+                        'already_rated':     True,
+                        'rating_cultural':   row.get('rating_cultural', ''),
+                        'rating_fluency':    row.get('rating_fluency', ''),
+                        'rating_contextual': row.get('rating_contextual', ''),
                     })
     except Exception as e:
         app.logger.error(f"Error reading history CSV: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
-    return jsonify({'success': True, 'messages': messages})
+    # Turn arbitration. If the user spoke last, the interviewer owes a reply —
+    # unless candidates are already sitting unrated in the live buffer (the
+    # same backend session survived the refresh), in which case polling will
+    # deliver them and we must not generate a second set.
+    pending  = _has_pending_interviewer_messages(session)
+    awaiting = (last_speaker == 'User') and not pending
+
+    if awaiting:
+        _ensure_interviewer_response(wrapper)
+
+    return jsonify({
+        'success': True,
+        'messages': messages,
+        'recorded_message_ids': recorded_ids,
+        'last_speaker': last_speaker,
+        'awaiting_model_response': awaiting,
+    })
 
 @app.route('/api/end-session', methods=['POST'])
 @login_required

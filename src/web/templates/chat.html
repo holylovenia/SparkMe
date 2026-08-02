@@ -395,10 +395,16 @@
 
                 const data = await response.json();
 
-                // inside pollForMessages(), after `const data = await response.json();`
-                if (data.success === false || (data.session_active === false && !data.session_completed)) {
+                // A farewell-pending session reports session_active === false by
+                // design — its final candidates are still awaiting a rating.
+                // Treating that as death drops them on the floor.
+                if (data.success === false ||
+                    (data.session_active === false &&
+                     !data.session_completed &&
+                     !data.farewell_pending)) {
                     clearInterval(pollingInterval);
                     pollingInterval = null;
+                    clearSessionToken();
                     updateStatus('Session timed out — please refresh to continue.');
                     return;
                 }
@@ -551,6 +557,60 @@
         }
 
         // ===================================================================
+        // HISTORY REPLAY / TURN ARBITRATION
+        // ===================================================================
+        async function replaySessionHistory(token) {
+            try {
+                const histResp = await fetchWithTimeout(
+                    `/api/session-history?session_token=${token}`, {}, 8000
+                );
+                const histData = await histResp.json();
+                if (!histData.success) return null;
+
+                // Anything already committed to the CSV must never be redrawn as a
+                // fresh likeable option, even if a failed acknowledge left it in
+                // the backend buffer. appendMessage() short-circuits on this set.
+                (histData.recorded_message_ids || []).forEach(id => {
+                    if (id) seenMessageIds.add(id);
+                });
+
+                (histData.messages || []).forEach(msg => {
+                    appendHistoryMessage(
+                        msg.role,
+                        msg.content,
+                        msg.id,
+                        msg.rating_cultural,
+                        msg.rating_fluency,
+                        msg.rating_contextual
+                    );
+                });
+                scrollToBottom();
+                return histData;
+            } catch (histErr) {
+                console.warn('Could not replay history:', histErr);
+                return null;
+            }
+        }
+
+        // Whoever spoke last in the CSV decides who moves next.
+        function applyResumeState(histData) {
+            if (!histData || isSessionCompleted) return;
+
+            if (histData.awaiting_model_response) {
+                // User spoke last → interviewer owes a reply (already requested
+                // server-side). Lock input so the user isn't invited to type twice.
+                waitingForResponse = true;
+                showTypingIndicator();
+                updateStatus('Resuming — waiting for the interviewer…');
+            } else if (histData.last_speaker === 'Interviewer' && pendingLikeCount === 0) {
+                // Model spoke last and that turn is already rated → user's move.
+                setChatInputsLocked(false);
+            }
+            // last_speaker === 'Interviewer' with unrated candidates still pending:
+            // polling delivers them and refreshLikeLock() takes over the lock.
+        }
+
+        // ===================================================================
         // INITIALIZATION
         // ===================================================================
         document.addEventListener('DOMContentLoaded', async function () {
@@ -571,57 +631,46 @@
                         `/api/get-messages?session_token=${stored}`, {}, 5000
                     );
                     const checkData = check.ok ? await check.json() : null;
+                    const resumable = checkData &&
+                        (checkData.session_active || checkData.farewell_pending);
 
-                    if (check.ok && checkData && checkData.session_active) {
+                    if (check.ok && resumable) {
                         sessionToken     = stored;
                         sessionStartTime = Date.now();
                         updateStatus(`Reconnected — ${lastChosenTopic} · ${lastChosenCountry}`);
 
-                        // ── Replay history from CSV before resuming polling
-                        try {
-                            const histResp = await fetchWithTimeout(
-                                `/api/session-history?session_token=${stored}`, {}, 8000
-                            );
-                            const histData = await histResp.json();
-                            if (histData.success && histData.messages.length > 0) {
-                                histData.messages.forEach(msg => {
-                                    appendHistoryMessage(
-                                        msg.role,
-                                        msg.content,
-                                        msg.id,
-                                        msg.rating_cultural,
-                                        msg.rating_fluency,
-                                        msg.rating_contextual
-                                    );
-                                });
-                                scrollToBottom();
-                            }
-                        } catch (histErr) {
-                            console.warn('Could not replay history:', histErr);
-                        }
+                        const histData = await replaySessionHistory(stored);
+                        applyResumeState(histData);
 
                         reconnected = true;
                         if (!pollingInterval) pollingInterval = setInterval(pollForMessages, 1500);
                         pollForMessages();
 
                     } else if (check.ok && checkData && checkData.session_completed) {
-                        // Legitimately finished — don't try to resurrect it
+                        // Legitimately finished — show the transcript, don't resurrect it.
+                        sessionToken = stored;
+                        isSessionCompleted = true;
+                        await replaySessionHistory(stored);
                         clearSessionToken();
+                        sessionToken = null;
+                        disableChatInputs();
                         updateStatus('This session has already been completed.');
+                        reconnected = true;   // ← was missing: fall-through restarted it
+
                     } else {
                         // Dead on the backend (timed out mid-generation, or evicted).
-                        // Fall through below to start a fresh backend session against
-                        // the same sel_session_id — history is preserved server-side.
+                        // Fall through to start a fresh backend session against the
+                        // same sel_session_id — history is preserved server-side.
                         clearSessionToken();
-                        updateStatus('Previous session expired — starting a new one…');
+                        updateStatus('Previous session expired — restoring…');
                     }
                 } catch (e) {
                     clearSessionToken();
-                    updateStatus('Could not reconnect — starting a new session…');
+                    updateStatus('Could not reconnect — restoring…');
                 }
             }
 
-            if (reconnected) return;   // ← the missing gate that caused the double-init
+            if (reconnected) return;
 
             // No valid stored session (or it was dead) — start a new one
             updateStatus('Starting session…');
@@ -642,6 +691,12 @@
                     saveSessionToken(sessionToken);
                     sessionStartTime = Date.now();
                     updateStatus(`Session ready — ${lastChosenTopic} · ${lastChosenCountry}`);
+
+                    // The backend session may be brand new while the CSV still holds
+                    // a conversation in progress. Replay it and hand the turn over.
+                    const histData = await replaySessionHistory(sessionToken);
+                    applyResumeState(histData);
+
                     if (!pollingInterval) pollingInterval = setInterval(pollForMessages, 1500);
                     pollForMessages();
                 } else {
