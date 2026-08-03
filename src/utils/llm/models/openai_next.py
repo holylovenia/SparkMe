@@ -2,24 +2,24 @@ import os
 from langchain_openai import ChatOpenAI
 from src.utils.llm.models.data import ModelResponse
 
-COHERE_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-OPENROUTER_API_KEY  = "<X>"
-COHERE_OPENROUTER_MODEL    = "cohere/command-r7b-12-2024"
+OPENAI_NEXT_BASE_URL = "https://api.openai-next.com/v1"
+OPENAI_NEXT_API_KEY  = "sk-hrgTnQZuOPTIlaRFEaF4185412C54958Ad6943547f4e4727"
+OPENAI_NEXT_MODEL    = "gpt-4o-mini"
 
-class CohereOpenRouterEngine:
+class OpenAINextEngine:
     """
-    Engine wrapper for Cohere Command R7B served via OpenRouter.
+    Engine wrapper for OpenAI Next.
 
     Environment variables (optional overrides):
-        COHERE_OPENROUTER_BASE_URL: API base URL
-        OPENROUTER_API_KEY:  Bearer token
-        COHERE_OPENROUTER_MODEL:    Model name
+        OPENAI_NEXT_BASE_URL: API base URL
+        OPENAI_NEXT_API_KEY:  Bearer token
+        OPENAI_NEXT_MODEL:    Model name
     """
 
     def __init__(self, **kwargs):
-        base_url   = kwargs.pop("base_url",   None) or os.getenv("COHERE_OPENROUTER_BASE_URL", COHERE_OPENROUTER_BASE_URL)
-        api_key    = kwargs.pop("api_key",    None) or os.getenv("OPENROUTER_API_KEY",  OPENROUTER_API_KEY)
-        model_name = kwargs.pop("model_name", None) or os.getenv("COHERE_OPENROUTER_MODEL",    COHERE_OPENROUTER_MODEL)
+        base_url   = kwargs.pop("base_url",   None) or os.getenv("OPENAI_NEXT_BASE_URL", OPENAI_NEXT_BASE_URL)
+        api_key    = kwargs.pop("api_key",    None) or os.getenv("OPENAI_NEXT_API_KEY",  OPENAI_NEXT_API_KEY)
+        model_name = kwargs.pop("model_name", None) or os.getenv("OPENAI_NEXT_MODEL",    OPENAI_NEXT_MODEL)
 
         self.model_name = model_name
 

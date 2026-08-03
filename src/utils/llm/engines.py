@@ -11,8 +11,8 @@ from src.utils.llm.models.vllm import VLLMEngine
 
 from src.utils.llm.models.lipsum import LipsumEngine
 from src.utils.llm.models.jais import JaisEngine
-from src.utils.llm.models.gpt4o_mini_proxy import GPT4OMiniProxyEngine
-from src.utils.llm.models.cohere_openrouter import CohereOpenRouterEngine
+from src.utils.llm.models.openai_next import OpenAINextEngine
+from src.utils.llm.models.openrouter import OpenRouterEngine
 from src.utils.llm.models.gemini_api import GeminiAPIEngine
 from src.utils.llm.models.fanar import FanarEngine
 
@@ -100,15 +100,16 @@ def get_engine(model_name, **kwargs):
         kwargs["max_tokens"] = token_limit
         return JaisEngine(**kwargs)
 
-    # Handle gpt-4o-mini proxy (identified by gpt4o-mini-proxy: prefix)
-    if model_name.startswith("gpt4o-mini-proxy:"):
+    # Handle gpt-4o-mini proxy (identified by openai-next: prefix)
+    if model_name.startswith("openai-next:"):
         kwargs["max_tokens"] = token_limit
-        return GPT4OMiniProxyEngine(**kwargs)
+        return OpenAINextEngine(**kwargs)
 
-    # Handle Cohere via OpenRouter (identified by cohere-openrouter: prefix)
-    if model_name.startswith("cohere-openrouter:"):
+    # Handle Cohere, Qwen, Meta-Llama via OpenRouter (identified by openrouter: prefix)
+    if model_name.startswith("openrouter:"):
+        actual_model_name = model_name[len("openrouter:"):]
         kwargs["max_tokens"] = token_limit
-        return CohereOpenRouterEngine(**kwargs)
+        return OpenRouterEngine(model_name=actual_model_name, **kwargs)
 
     # Handle Fanar models (identified by fanar: prefix)
     if model_name.startswith("fanar:"):

@@ -50,20 +50,7 @@ class Interviewer(BaseAgent, Participant):
             self, title="Interviewer",
             interview_session=interview_session)
 
-        self.engines = [
-            get_engine(
-                model_name=config.get("model_name_1", os.getenv("MODEL_NAME_1", "lipsum:model-1")), base_url=config.get("base_url", None)
-            ),
-            get_engine(
-                model_name=config.get("model_name_2", os.getenv("MODEL_NAME_2", "lipsum:model-2")), base_url=config.get("base_url", None)
-            ),
-            get_engine(
-                model_name=config.get("model_name_3", os.getenv("MODEL_NAME_3", "lipsum:model-3")), base_url=config.get("base_url", None)
-            ),
-            get_engine(
-                model_name=config.get("model_name_4", os.getenv("MODEL_NAME_4", "lipsum:model-4")), base_url=config.get("base_url", None)
-            ),
-        ]
+        self.config = config
 
         self.interview_description = config.get("interview_description")
         self.tools = {
@@ -92,6 +79,17 @@ class Interviewer(BaseAgent, Participant):
 
         self._turn_to_respond = False
         self._max_consideration_iterations = 4
+
+    def _get_from_random_model_pool(self, start_index=3, last_index=6, n_return=2):
+            model_pool = []
+            for i in range(start_index, last_index + 1):
+                model_i = os.getenv(f"MODEL_NAME_{i}", f"lipsum:model-{i}")
+                if "lipsum" in model_i:
+                    break
+                else:
+                    model_pool.append(model_i)
+            random.shuffle(model_pool)
+            return model_pool[:n_return]
 
     def _handle_quantify_response(self, quantified_response: str,
                                   original_response: str) -> Tuple[str, Rubric]:
@@ -175,6 +173,22 @@ class Interviewer(BaseAgent, Participant):
         self.add_event(sender=self.name, tag="llm_prompt", content=prompt)
 
         ENGINE_TIMEOUT = float(os.getenv("ENGINE_TIMEOUT_SECONDS", "60"))
+
+        rotating_models = self._get_from_random_model_pool(start_index=3, last_index=6, n_return=2)
+        self.engines = [
+            get_engine(
+                model_name=self.config.get("model_name_1", os.getenv("MODEL_NAME_1", "lipsum:model-1")), base_url=self.config.get("base_url", None)
+            ),
+            get_engine(
+                model_name=self.config.get("model_name_2", os.getenv("MODEL_NAME_2", "lipsum:model-2")), base_url=self.config.get("base_url", None)
+            ),
+            get_engine(
+                model_name=self.config.get("model_name_3", rotating_models[0]), base_url=self.config.get("base_url", None)
+            ),
+            get_engine(
+                model_name=self.config.get("model_name_4", rotating_models[1]), base_url=self.config.get("base_url", None)
+            ),
+        ]
 
         async def _call_with_timeout(engine, prompt):
             return await asyncio.wait_for(
