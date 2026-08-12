@@ -206,10 +206,10 @@ def get_all_countries() -> list:
         "France","Germany","Ghana","Greece","Hungary","India","Indonesia",
         "Iran","Iraq","Ireland","Israel","Italy","Japan","Jordan","Kenya",
         "Lebanon","Malaysia","Mexico","Morocco","Netherlands","New Zealand",
-        "Nigeria","Norway","Pakistan","Peru","Philippines","Poland","Portugal",
+        "Nigeria","Norway","Pakistan","Palestine","Peru","Philippines","Poland","Portugal",
         "Romania","Russia","Saudi Arabia","Serbia","Singapore","South Africa",
         "South Korea","Spain","Sri Lanka","Sweden","Switzerland","Syria",
-        "Taiwan","Thailand","Turkey","UAE","Ukraine","United Kingdom",
+        "Taiwan","Thailand","Tunisia","Turkey","UAE","Ukraine","United Kingdom",
         "United States","Venezuela","Vietnam","Yemen"
     ]
 
@@ -482,6 +482,9 @@ def register():
         # Create user directories
         os.makedirs(os.path.join(os.getenv('LOGS_DIR', 'logs'), user_id), exist_ok=True)
         os.makedirs(os.path.join(os.getenv('DATA_DIR', 'data'), user_id), exist_ok=True)
+
+        os.chmod(os.path.join(os.getenv('LOGS_DIR', 'logs'), user_id), 0o777)
+        os.chmod(os.path.join(os.getenv('DATA_DIR', 'data'), user_id), 0o777)
 
         app.logger.info(f"New user registered: {username} ({user_id}) from {country}")
         flash('Registration successful! Please login.', 'success')
