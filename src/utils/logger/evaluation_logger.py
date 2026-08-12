@@ -3,6 +3,7 @@ import csv
 import os
 from datetime import datetime
 from typing import Dict, Any, List, Optional
+from src.utils.user_paths import user_logs_dir
 
 from tiktoken import get_encoding
 
@@ -25,7 +26,7 @@ class EvaluationLogger:
         
         # Create evaluations directory
         if user_id:
-            self.eval_dir = self.base_dir / user_id / "evaluations"
+            self.eval_dir = Path(user_logs_dir(user_id)) / "evaluations"
         else:
             self.eval_dir = self.base_dir / "evaluations"
         self.eval_dir.mkdir(parents=True, exist_ok=True)

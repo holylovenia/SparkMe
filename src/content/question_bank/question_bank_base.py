@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 from src.content.question_bank.question import Rubric, Question, QuestionSearchResult
 from src.utils.llm.engines import get_engine, invoke_engine
 from src.utils.logger.evaluation_logger import EvaluationLogger
-
+from src.utils.user_paths import user_logs_dir
 
 
 
@@ -87,34 +87,23 @@ class QuestionBankBase(ABC):
         pass
     
     def save_to_file(self, user_id: str) -> None:
-        """Save the question bank to file."""
-        content_data = {
-            'questions': [question.to_dict() for question in self.questions]
-        }
-        
-        # Save to the main user directory
-        content_filepath = os.getenv("LOGS_DIR") + \
-            f"/{user_id}/question_bank_content.json"
+        content_data = {'questions': [q.to_dict() for q in self.questions]}
+
+        user_dir = user_logs_dir(user_id)
+        content_filepath = os.path.join(user_dir, "question_bank_content.json")
         os.makedirs(os.path.dirname(content_filepath), exist_ok=True)
-        
         with open(content_filepath, 'w') as f:
             json.dump(content_data, f, indent=2)
-        
-        # Implementation-specific save for main directory
-        self._save_implementation_specific(user_id)
-        
-        # If session_id is provided, save an additional copy in the session directory
+
+        self._save_implementation_specific(user_dir)
+
         if self.session_id:
-            session_filepath = os.getenv("LOGS_DIR") + \
-                f"/{user_id}/execution_logs/session_{self.session_id}/question_bank_content.json"
+            session_dir = os.path.join(user_dir, "execution_logs", f"session_{self.session_id}")
+            session_filepath = os.path.join(session_dir, "question_bank_content.json")
             os.makedirs(os.path.dirname(session_filepath), exist_ok=True)
-            
             with open(session_filepath, 'w') as f:
                 json.dump(content_data, f, indent=2)
-                
-            # Implementation-specific save for session directory
-            session_path = f"{user_id}/execution_logs/session_{self.session_id}"
-            self._save_implementation_specific(session_path)
+            self._save_implementation_specific(session_dir)
     
     @abstractmethod
     def _save_implementation_specific(self, path: str) -> None:
@@ -130,8 +119,7 @@ class QuestionBankBase(ABC):
         """Load a question bank from file."""
         question_bank = cls()
         
-        content_filepath = os.getenv("LOGS_DIR") + \
-            f"/{user_id}/question_bank_content.json"
+        content_filepath = os.path.join(user_logs_dir(user_id), "question_bank_content.json")
         
         try:
             with open(content_filepath, 'r') as f:

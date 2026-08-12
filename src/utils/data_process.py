@@ -6,6 +6,7 @@ import re
 
 from datetime import datetime
 from src.interview_session.session_models import Message
+from src.utils.user_paths import user_logs_dir
 
 
 def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
@@ -17,7 +18,7 @@ def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
                        n_turns: int = None, sel_session_id: str = None):
     """Record a single turn (user or model) to the per-assigned-session CSV."""
 
-    ratings_dir = os.path.join(os.getenv("LOGS_DIR", "logs"), user_id, 'ratings')
+    ratings_dir = os.path.join(user_logs_dir(user_id, country=country), 'ratings')
     os.makedirs(ratings_dir, exist_ok=True)
 
     def _safe(s):
@@ -63,7 +64,7 @@ def save_feedback_to_csv(interviewer_message, feedback_message, user_id: str, se
                          topic: str = None, n_turns: int = None):
     """Save feedback message to a CSV file with the last conversation message"""
 
-    feedback_dir = os.path.join(os.getenv("LOGS_DIR", "logs"), user_id, 'feedback')
+    feedback_dir = os.path.join(user_logs_dir(user_id, country=country), 'feedback')
     os.makedirs(feedback_dir, exist_ok=True)
 
     # New naming format: {user_id}_{session_id}_{country}_{topic}_{n_turns}

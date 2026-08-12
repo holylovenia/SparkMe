@@ -7,6 +7,8 @@ from datetime import datetime
 from typing import Dict, Optional
 from pathlib import Path
 
+from src.utils.user_paths import user_logs_dir
+
 
 class TokenUsageTracker:
     """
@@ -122,7 +124,7 @@ class TokenUsageTracker:
                        based on user_id and session_id
         """
         if output_dir is None:
-            output_dir = f"{os.getenv('LOGS_DIR')}/{self.user_id}/statistics/session_{self.session_id}"
+            output_dir = os.path.join(user_logs_dir(self.user_id), 'statistics', f'session_{self.session_id}')
 
         # Create directory if it doesn't exist
         Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -146,7 +148,7 @@ class TokenUsageTracker:
             output_dir: Directory to save the summary. If None, uses default location
         """
         if output_dir is None:
-            output_dir = f"{os.getenv('LOGS_DIR')}/{self.user_id}/statistics/session_{self.session_id}"
+            output_dir = os.path.join(user_logs_dir(self.user_id), 'statistics', f'session_{self.session_id}')
 
         # Create directory if it doesn't exist
         Path(output_dir).mkdir(parents=True, exist_ok=True)

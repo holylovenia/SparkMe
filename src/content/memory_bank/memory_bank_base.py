@@ -7,7 +7,7 @@ import string
 from datetime import datetime
 
 
-
+from src.utils.user_paths import user_logs_dir
 from src.content.memory_bank.memory import Memory, MemorySearchResult
 
 class MemoryBankBase(ABC):
@@ -82,41 +82,23 @@ class MemoryBankBase(ABC):
         pass
     
     def save_to_file(self, user_id: str) -> None:
-        """Save the memory bank to file.
-        
-        Args:
-            user_id: ID of the user whose memories are being saved
-        """
-        content_data = {
-            'memories': [memory.to_dict() for memory in self.memories]
-        }
-        
-        # Save to the main user directory
-        content_filepath = os.getenv("LOGS_DIR") + \
-            f"/{user_id}/memory_bank_content.json"
-        
-        # Ensure directory exists
+        content_data = {'memories': [memory.to_dict() for memory in self.memories]}
+
+        user_dir = user_logs_dir(user_id)
+        content_filepath = os.path.join(user_dir, "memory_bank_content.json")
         os.makedirs(os.path.dirname(content_filepath), exist_ok=True)
-        
         with open(content_filepath, 'w') as f:
             json.dump(content_data, f, indent=2)
-        
-        # Implementation-specific save for main directory
-        self._save_implementation_specific(user_id)
-        
-        # If session_id is provided, save an additional copy in the session directory
+
+        self._save_implementation_specific(user_dir)
+
         if self.session_id:
-            session_filepath = os.getenv("LOGS_DIR") + \
-                f"/{user_id}/execution_logs/session_{self.session_id}/" + \
-                "memory_bank_content.json"
+            session_dir = os.path.join(user_dir, "execution_logs", f"session_{self.session_id}")
+            session_filepath = os.path.join(session_dir, "memory_bank_content.json")
             os.makedirs(os.path.dirname(session_filepath), exist_ok=True)
-            
             with open(session_filepath, 'w') as f:
                 json.dump(content_data, f, indent=2)
-                
-            # Implementation-specific save for session directory
-            session_path = f"{user_id}/execution_logs/session_{self.session_id}"
-            self._save_implementation_specific(session_path)
+            self._save_implementation_specific(session_dir)
     
     @abstractmethod
     def _save_implementation_specific(self, path: str) -> None:
@@ -144,8 +126,7 @@ class MemoryBankBase(ABC):
         if base_path:
             content_filepath = os.path.join(base_path, "memory_bank_content.json")
         else:
-            content_filepath = os.getenv("LOGS_DIR") + \
-                f"/{user_id}/memory_bank_content.json"
+            content_filepath = os.path.join(user_logs_dir(user_id), "memory_bank_content.json")
         
         try:
             # Load content

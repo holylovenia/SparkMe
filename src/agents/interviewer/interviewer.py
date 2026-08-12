@@ -18,6 +18,7 @@ from src.utils.llm.xml_formatter import parse_rubric_call
 from src.utils.logger.session_logger import SessionLogger
 from src.utils.constants.colors import GREEN, RESET
 from src.content.question_bank.question import Rubric
+from src.utils.user_paths import user_logs_dir
 
 if TYPE_CHECKING:
     from src.interview_session.interview_session import InterviewSession
@@ -267,7 +268,7 @@ class Interviewer(BaseAgent, Participant):
             f"{_safe(country)}_{_safe(topic)}_{_safe(n_turns)}.csv"
         )
         ratings_file = os.path.join(
-            os.getenv('LOGS_DIR', 'logs'), user_id, 'ratings', filename
+            user_logs_dir(user_id, country=country), 'ratings', filename
         )
 
         events = []

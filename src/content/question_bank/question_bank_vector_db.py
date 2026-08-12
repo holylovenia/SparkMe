@@ -8,6 +8,7 @@ import faiss
 from src.content.question_bank.question_bank_base import QuestionBankBase
 from src.content.question_bank.question import Rubric, Question, QuestionSearchResult
 from src.content.embeddings.embedding_service import EmbeddingService
+from src.utils.user_paths import user_logs_dir
 
 # Load environment variables
 
@@ -101,8 +102,7 @@ class QuestionBankVectorDB(QuestionBankBase):
             ]
         }
         
-        embedding_filepath = os.getenv("LOGS_DIR") + \
-            f"/{path}/question_bank_embeddings.json"
+        embedding_filepath = os.path.join(path, "question_bank_embeddings.json")
         os.makedirs(os.path.dirname(embedding_filepath), exist_ok=True)
         
         with open(embedding_filepath, 'w') as f:
@@ -110,7 +110,7 @@ class QuestionBankVectorDB(QuestionBankBase):
 
     def _load_implementation_specific(self, user_id: str) -> None:
         """Load embeddings from file and reconstruct the FAISS index."""
-        embedding_filepath = os.getenv("LOGS_DIR") + f"/{user_id}/question_bank_embeddings.json"
+        embedding_filepath = os.path.join(user_logs_dir(user_id), "question_bank_embeddings.json")
         
         try:
             with open(embedding_filepath, 'r') as f:

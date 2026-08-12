@@ -8,6 +8,7 @@ from src.content.question_bank.question import Question, InterviewQuestion, Rubr
 from src.content.session_agenda.interview_topic_manager import InterviewTopicManager
 from src.utils.logger.session_logger import SessionLogger
 from src.utils.data_process import safe_parse_json
+from src.utils.user_paths import user_logs_dir
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -88,7 +89,7 @@ class SessionAgenda:
                                 interview_description: Optional[str] = None,
                                 interview_evaluation: Optional[str] = None):
         """Retrieves the last session agenda for a user."""
-        base_path = os.path.join(LOGS_DIR, user_id, "execution_logs")
+        base_path = os.path.join(user_logs_dir(user_id), "execution_logs")
         if not os.path.exists(base_path):
             os.makedirs(base_path)
             
@@ -462,7 +463,7 @@ class SessionAgenda:
     @classmethod
     def get_historical_session_summaries(cls, user_id: str) -> str:
         """Returns formatted string of all historical session summaries."""
-        base_path = os.path.join(LOGS_DIR, user_id, "execution_logs")
+        base_path = os.path.join(user_logs_dir(user_id), "execution_logs")
         if not os.path.exists(base_path):
             return ""
             

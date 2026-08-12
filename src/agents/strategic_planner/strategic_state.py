@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
+from src.utils.user_paths import user_logs_dir
 
 
 class ConversationRollout(BaseModel):
@@ -127,13 +128,7 @@ class StrategicState(BaseModel):
             user_id: User ID for directory path
             turn_number: Current conversation turn
         """
-        logs_dir = os.getenv("LOGS_DIR", "logs")
-        session_dir = os.path.join(
-            logs_dir,
-            user_id,
-            "execution_logs",
-            f"session_{self.session_id}"
-        )
+        session_dir = os.path.join(user_logs_dir(user_id), "execution_logs", f"session_{self.session_id}")
 
         # Create directory if needed
         os.makedirs(session_dir, exist_ok=True)
@@ -158,12 +153,4 @@ class StrategicState(BaseModel):
 
     @staticmethod
     def _get_file_path_static(user_id: str, session_id: int) -> str:
-        """Get file path for strategic state"""
-        logs_dir = os.getenv("LOGS_DIR", "logs")
-        return os.path.join(
-            logs_dir,
-            user_id,
-            "execution_logs",
-            f"session_{session_id}",
-            "strategic_state.json"
-        )
+        return os.path.join(user_logs_dir(user_id), "execution_logs", f"session_{session_id}", "strategic_state.json")

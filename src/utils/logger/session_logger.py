@@ -2,6 +2,7 @@ import logging
 import pathlib
 import os
 from typing import List, Optional
+from src.utils.user_paths import user_logs_dir
 
 import threading
 
@@ -104,7 +105,7 @@ class SessionLogger:
         self.session_id = session_id
         self.log_type = log_type
         self.log_level = log_level
-        self.log_dir = pathlib.Path(LOGS_DIR) / user_id
+        self.log_dir = pathlib.Path(user_logs_dir(user_id))
         self.console_output_files = console_output_files        
         
         # Store this instance as the current logger

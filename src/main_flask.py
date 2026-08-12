@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 # Your backend imports
 from src.interview_session.interview_session import InterviewSession
 from src.utils.data_process import save_rating_to_csv
+from src.utils.user_paths import get_user_country, user_data_dir, user_logs_dir
 
 load_dotenv(override=True)
 
@@ -54,6 +55,19 @@ class AppConfig:
         self.additional_context_path = None
 
 config = AppConfig()
+
+# get_user_sessions_path
+def get_user_sessions_path(user_id: str) -> str:
+    """Get path to user's session list JSON"""
+    return os.path.join(user_data_dir(user_id), 'user_sessions.json')
+
+# get_user_stats_path
+def get_user_stats_path(user_id: str) -> str:
+    return os.path.join(user_data_dir(user_id), 'user_stats.json')
+
+# get_survey_path
+def get_survey_path(user_id: str) -> str:
+    return os.path.join(user_data_dir(user_id), 'survey.json')
 
 # =============================================================================
 # FLASK APP SETUP
@@ -101,11 +115,6 @@ def save_users(users):
 def hash_password(password):
     """Hash password using SHA-256"""
     return hashlib.sha256(password.encode()).hexdigest()
-
-def get_user_sessions_path(user_id: str) -> str:
-    """Get path to user's session list JSON"""
-    data_dir = os.getenv('DATA_DIR', 'data')
-    return os.path.join(data_dir, user_id, 'user_sessions.json')
 
 def load_user_sessions(user_id: str) -> list:
     """Load session list for a user"""
@@ -169,9 +178,6 @@ def run_async_task(coro):
 # =============================================================================
 
 # ── Survey helpers ────────────────────────────────────────────────────────────
-
-def get_survey_path(user_id: str) -> str:
-    return os.path.join(os.getenv('DATA_DIR', 'data'), user_id, 'survey.json')
 
 def load_survey(user_id: str) -> dict:
     path = get_survey_path(user_id)
@@ -274,7 +280,7 @@ def _read_csv_progress(user_id: str, sel_session_id, session_id,
         f"{_safe(country)}_{_safe(topic)}_{_safe(n_turns)}.csv"
     )
     ratings_file = os.path.join(
-        os.getenv('LOGS_DIR', 'logs'), user_id, 'ratings', filename
+        user_logs_dir(user_id, country=country), 'ratings', filename
     )
 
     progress = {'user_turns': 0, 'last_speaker': None}
@@ -479,12 +485,11 @@ def register():
         }
         save_users(users)
 
-        # Create user directories
-        os.makedirs(os.path.join(os.getenv('LOGS_DIR', 'logs'), user_id), exist_ok=True)
-        os.makedirs(os.path.join(os.getenv('DATA_DIR', 'data'), user_id), exist_ok=True)
-
-        os.chmod(os.path.join(os.getenv('LOGS_DIR', 'logs'), user_id), 0o777)
-        os.chmod(os.path.join(os.getenv('DATA_DIR', 'data'), user_id), 0o777)
+        # Create user directories (grouped under a per-country folder)
+        os.makedirs(user_logs_dir(user_id, country=country), exist_ok=True)
+        os.makedirs(user_data_dir(user_id, country=country), exist_ok=True)
+        os.chmod(user_logs_dir(user_id, country=country), 0o777)
+        os.chmod(user_data_dir(user_id, country=country), 0o777)
 
         app.logger.info(f"New user registered: {username} ({user_id}) from {country}")
         flash('Registration successful! Please login.', 'success')
@@ -1024,8 +1029,9 @@ def session_history():
         f"{_safe(sel_session_id if sel_session_id is not None else session.session_id)}_"
         f"{_safe(country)}_{_safe(topic)}_{_safe(n_turns)}.csv"
     )
-    ratings_dir  = os.path.join(os.getenv('LOGS_DIR', 'logs'), session.user_id, 'ratings')
-    ratings_file = os.path.join(ratings_dir, filename)
+    ratings_file = os.path.join(
+        user_logs_dir(session.user_id, country=country), 'ratings', filename
+    )
 
     if not os.path.exists(ratings_file):
         return jsonify({

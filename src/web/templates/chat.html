@@ -20,7 +20,9 @@
                 <li>The conversation should be about <strong>{{ topic }} in {{ country }}</strong>.</li>
                 <li>
                     Here is an example of a conversation starter:
-                    <strong>"{{ first_prompt }}"</strong>
+                    <strong><p style="white-space: pre-line; line-height: 0.5;">
+                        {{ first_prompt.replace(" OR (out-country example)", "\n\n\n\n(out-country example)") }}
+                    </p></strong>
                 </li>
                 <li>
                     <ul>

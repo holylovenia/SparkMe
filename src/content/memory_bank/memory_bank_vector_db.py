@@ -12,6 +12,7 @@ import numpy as np
 from src.content.memory_bank.memory_bank_base import MemoryBankBase
 from src.content.memory_bank.memory import Memory, MemorySearchResult
 from src.content.embeddings.embedding_service import EmbeddingService
+from src.utils.user_paths import user_logs_dir
 
 # Load environment variables
 
@@ -114,10 +115,8 @@ class VectorMemoryBank(MemoryBankBase):
             ]
         }
         
-        embedding_filepath = os.getenv("LOGS_DIR") + \
-            f"/{path}/memory_bank_embeddings.json"
+        embedding_filepath = os.path.join(path, "memory_bank_embeddings.json")
         os.makedirs(os.path.dirname(embedding_filepath), exist_ok=True)
-        
         with open(embedding_filepath, 'w') as f:
             json.dump(embedding_data, f)
 
@@ -127,7 +126,7 @@ class VectorMemoryBank(MemoryBankBase):
         if base_path:
             embedding_filepath = os.path.join(base_path, "memory_bank_embeddings.json")
         else:
-            embedding_filepath = os.getenv("LOGS_DIR") + f"/{user_id}/memory_bank_embeddings.json"
+            embedding_filepath = os.path.join(user_logs_dir(user_id), "memory_bank_embeddings.json")
         
         try:
             with open(embedding_filepath, 'r') as f:

@@ -7,7 +7,7 @@ import os
 import asyncio
 import re
 
-
+from src.utils.user_paths import user_data_dir
 from src.content.question_bank.question import Question, Rubric
 from src.content.session_agenda.core_topic import CoreTopic
 
@@ -82,9 +82,8 @@ class Section:
 
 class Report:
     def __init__(self, user_id):
-        # Path information
         self.user_id = user_id or str(uuid.uuid4())
-        self.base_path = f"{os.getenv('DATA_DIR', 'data')}/{self.user_id}/"
+        self.base_path = f"{user_data_dir(self.user_id)}/"
         os.makedirs(self.base_path, exist_ok=True)
 
         # Version information
