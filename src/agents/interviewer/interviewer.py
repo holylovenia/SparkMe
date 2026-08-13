@@ -24,6 +24,18 @@ if TYPE_CHECKING:
     from src.interview_session.interview_session import InterviewSession
 
 
+# Engines are stateless request builders — building them per turn throws away
+# the HTTP connection pool and forces a fresh TLS handshake every message.
+_ENGINE_CACHE = {}
+
+def _cached_engine(model_name: str, base_url: str = None, max_tokens: int = None):
+    key = (model_name, base_url, max_tokens)
+    if key not in _ENGINE_CACHE:
+        _ENGINE_CACHE[key] = get_engine(
+            model_name=model_name, base_url=base_url, max_tokens=max_tokens
+        )
+    return _ENGINE_CACHE[key]
+
 
 class TTSConfig(TypedDict, total=False):
     """Configuration for text-to-speech."""
@@ -173,23 +185,18 @@ class Interviewer(BaseAgent, Participant):
         prompt = self._get_prompt()
         self.add_event(sender=self.name, tag="llm_prompt", content=prompt)
 
-        ENGINE_TIMEOUT = float(os.getenv("ENGINE_TIMEOUT_SECONDS", "60"))
+        ENGINE_TIMEOUT = float(os.getenv("ENGINE_TIMEOUT_SECONDS", "20"))
+        MAX_TOKENS     = int(os.getenv("INTERVIEWER_MAX_TOKENS", "3000"))
 
         rotating_models = self._get_from_random_model_pool(start_index=3, last_index=6, n_return=2)
-        self.engines = [
-            get_engine(
-                model_name=self.config.get("model_name_1", os.getenv("MODEL_NAME_1", "lipsum:model-1")), base_url=self.config.get("base_url", None)
-            ),
-            get_engine(
-                model_name=self.config.get("model_name_2", os.getenv("MODEL_NAME_2", "lipsum:model-2")), base_url=self.config.get("base_url", None)
-            ),
-            get_engine(
-                model_name=self.config.get("model_name_3", rotating_models[0]), base_url=self.config.get("base_url", None)
-            ),
-            get_engine(
-                model_name=self.config.get("model_name_4", rotating_models[1]), base_url=self.config.get("base_url", None)
-            ),
+        turn_models = [
+            self.config.get("model_name_1", os.getenv("MODEL_NAME_1", "lipsum:model-1")),
+            self.config.get("model_name_2", os.getenv("MODEL_NAME_2", "lipsum:model-2")),
+            self.config.get("model_name_3", rotating_models[0]),
+            self.config.get("model_name_4", rotating_models[1]),
         ]
+        base_url = self.config.get("base_url", None)
+        self.engines = [_cached_engine(m, base_url, MAX_TOKENS) for m in turn_models]
 
         async def _call_with_timeout(engine, prompt):
             return await asyncio.wait_for(
