@@ -370,16 +370,41 @@
         // ===================================================================
         // MESSAGE POLLING
         // ===================================================================
-        async function markSessionCompleted() {
-            try {
-                await fetch('/api/mark-session-completed', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ session_id: assignedSessionId })
-                });
-            } catch (e) {
-                console.error('Error marking session completed:', e);
+        async function markSessionCompleted(attempts = 3) {
+            for (let i = 0; i < attempts; i++) {
+                try {
+                    const resp = await fetchWithTimeout('/api/mark-session-completed', {
+                        method:  'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body:    JSON.stringify({ session_id: assignedSessionId })
+                    }, 10000);
+                    // fetch() only rejects on network failure — a 404/500 lands
+                    // here with the promise resolved, so check the status.
+                    if (resp.ok) {
+                        const data = await resp.json().catch(() => ({}));
+                        if (data.success) return true;
+                    }
+                    console.warn(
+                        `mark-session-completed failed (HTTP ${resp.status}), ` +
+                        `attempt ${i + 1}/${attempts}`
+                    );
+                } catch (e) {
+                    console.error(`Error marking session completed (attempt ${i + 1}/${attempts}):`, e);
+                }
+                if (i < attempts - 1) await new Promise(r => setTimeout(r, 1000 * (i + 1)));
             }
+            return false;
+        }
+
+        async function retryMarkCompleted(event) {
+            if (event) event.preventDefault();
+            updateStatus('Retrying…');
+            const ok = await markSessionCompleted();
+            if (ok) clearSessionToken();
+            document.getElementById('status').innerHTML = ok
+                ? 'Session completed! <a href="/" style="color:#2196F3;font-weight:600;">← Back to sessions</a>'
+                : 'Session completed, but the session list could not be updated. ' +
+                  '<a href="#" onclick="retryMarkCompleted(event)" style="color:#2196F3;font-weight:600;">Retry</a>';
         }
 
         async function pollForMessages() {

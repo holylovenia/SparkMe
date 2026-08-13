@@ -130,6 +130,31 @@ def save_user_sessions(user_id: str, sessions: list):
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(sessions, f, indent=2, ensure_ascii=False)
 
+def mark_user_session_completed(user_id: str, sel_session_id) -> bool:
+    """Set completed=True in user_sessions.json. Idempotent — returns True
+    only when the flag actually flipped. session_id is compared as a string
+    because the JSON stores it as an int while callers pass it as a string."""
+    if sel_session_id is None:
+        return False
+
+    sessions = load_user_sessions(user_id)
+    for s in sessions:
+        if str(s.get('session_id')) == str(sel_session_id):
+            if s.get('completed'):
+                return False
+            s['completed'] = True
+            save_user_sessions(user_id, sessions)
+            app.logger.info(
+                f"Marked session_id={sel_session_id} completed for user={user_id}"
+            )
+            return True
+
+    app.logger.warning(
+        f"Could not mark session_id={sel_session_id} completed for "
+        f"user={user_id} — no matching entry in user_sessions.json"
+    )
+    return False
+
 @login_manager.user_loader
 def load_user(user_id):
     users = load_users()
@@ -307,6 +332,44 @@ def _count_completed_user_turns(user_id: str, sel_session_id, session_id,
     """Count user-turn rows already written to the ratings CSV."""
     return _read_csv_progress(user_id, sel_session_id, session_id,
                               country, topic, n_turns)['user_turns']
+
+def _is_complete_per_csv(user_id: str, s: dict) -> bool:
+    """Completion test used by create_interview_session: every user turn taken
+    and the final interviewer turn already rated."""
+    n_turns = s.get('n_turns')
+    if n_turns is None:
+        return False
+
+    progress = _read_csv_progress(
+        user_id=user_id,
+        sel_session_id=s.get('session_id'),
+        session_id=s.get('session_id'),
+        country=s.get('country'),
+        topic=s.get('topic'),
+        n_turns=n_turns,
+    )
+    return (progress['user_turns'] >= int(n_turns)
+            and progress['last_speaker'] == 'Interviewer')
+
+
+def sync_completed_sessions(user_id: str) -> list:
+    """Load a user's sessions, marking any the CSV shows as finished.
+    Backfills entries completed before this check existed."""
+    sessions = load_user_sessions(user_id)
+    changed = False
+
+    for s in sessions:
+        if not s.get('completed') and _is_complete_per_csv(user_id, s):
+            s['completed'] = True
+            changed = True
+            app.logger.info(
+                f"Backfilled completed=True for user={user_id} "
+                f"session_id={s.get('session_id')}"
+            )
+
+    if changed:
+        save_user_sessions(user_id, sessions)
+    return sessions
 
 def create_interview_session(user_id: str,
                              sel_session_id: str = None,
@@ -558,7 +621,7 @@ def unified_chat():
 def get_user_sessions():
     """Return the list of sessions for the logged-in user"""
     user_id = current_user.id
-    sessions = load_user_sessions(user_id)
+    sessions = sync_completed_sessions(user_id)
     return jsonify({'success': True, 'sessions': sessions})
 
 @app.route('/api/start-session', methods=['POST'])
@@ -786,6 +849,13 @@ def get_messages():
         or session.session_completed
     )
 
+   # Single source of truth: whatever makes the chat window say "completed"
+   # is exactly what marks it completed in user_sessions.json.
+    if is_session_done:
+        mark_user_session_completed(
+            session.user_id, getattr(session, 'sel_session_id', None)
+        )
+
     # The farewell turn has been delivered but not yet rated. The session is
     # deliberately no longer "in progress", yet it is emphatically not dead —
     # its final four candidates are still in the buffer awaiting a rating.
@@ -857,17 +927,11 @@ def mark_session_completed():
         return jsonify({'success': False, 'error': 'Missing session_id'}), 400
 
     sessions = load_user_sessions(user_id)
-    found = False
-    for s in sessions:
-        if s['session_id'] == sel_session_id:
-            s['completed'] = True
-            found = True
-            break
-
-    if not found:
+    if not mark_user_session_completed(user_id, sel_session_id) and not any(
+        str(s.get('session_id')) == str(sel_session_id) for s in sessions
+    ):
         return jsonify({'success': False, 'error': 'Session not found'}), 404
 
-    save_user_sessions(user_id, sessions)
     return jsonify({'success': True, 'message': f'Session {sel_session_id} marked completed'})
 
 def _has_pending_interviewer_messages(session) -> bool:
