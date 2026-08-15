@@ -345,12 +345,11 @@ class InterviewSession:
                     "execution_log",
                     f"[TURNS] Maximum turns ({self.max_turns}) reached. Triggering farewell."
                 )
-                # Delay farewell slightly so the regular on_message response
-                # has time to reach present_as_options before session_in_progress is cleared
-                async def _delayed_farewell():
-                    await asyncio.sleep(0.5)
-                    await self.trigger_farewell()
-                asyncio.create_task(_delayed_farewell())
+                # trigger_farewell() waits for the response the notify path
+                # above just started, then closes the session. It no longer
+                # needs a head-start sleep here, and a fixed delay never
+                # worked anyway — generation takes tens of seconds.
+                asyncio.create_task(self.trigger_farewell())
 
                 final_summary_path = self.token_tracker.save_final_summary()
                 SessionLogger.log_to_file(
@@ -510,14 +509,63 @@ class InterviewSession:
             return "Please start the conversation with a prompt related to the topic you chose."
         return None
 
+    async def _wait_for_interviewer_turn(self, timeout: float = 300.0) -> bool:
+        """Block while the interviewer is generating a turn.
+
+        Returns True if a turn was in flight (and has now been delivered),
+        False if the interviewer had nothing running.
+        """
+        interviewer = self._interviewer
+        if interviewer is None:
+            return False
+
+        # Grace window. The turn-limit check in _notify_participants runs a
+        # beat after the interviewer task is created, so on the final turn the
+        # flag may not be up yet — a bare check would race it and miss.
+        grace_deadline = time.monotonic() + 2.0
+        while not getattr(interviewer, '_turn_to_respond', False):
+            if time.monotonic() >= grace_deadline:
+                return False
+            await asyncio.sleep(0.05)
+
+        deadline = time.monotonic() + timeout
+        while getattr(interviewer, '_turn_to_respond', False):
+            if time.monotonic() >= deadline:
+                SessionLogger.log_to_file(
+                    "execution_log",
+                    f"[FAREWELL] In-flight interviewer turn did not finish within "
+                    f"{timeout}s — closing the session without waiting further.",
+                    log_level="warning"
+                )
+                return True
+            await asyncio.sleep(0.1)
+
+        return True
+
     async def trigger_farewell(self):
-        """Deliver one final interviewer turn then mark the session closed."""
+        """Close the session, ensuring exactly one final interviewer turn.
+
+        The final user message triggers the interviewer through the normal
+        notify path *and* exhausts the turn budget. Those are the same turn:
+        the panel already being generated IS the farewell response. Generating
+        another one here would put a second set of candidates on screen for one
+        question, so wait for the in-flight turn and only generate if there
+        isn't one (e.g. a session resumed with the farewell still owed).
+        """
         if self._session_ending:
             return  # already in flight
         try:
             self._session_ending = True
             SessionLogger.log_to_file("execution_log", "[FAREWELL] Triggering farewell response.")
-            await self._interviewer.on_message(None)
+
+            if await self._wait_for_interviewer_turn():
+                SessionLogger.log_to_file(
+                    "execution_log",
+                    "[FAREWELL] Adopted the in-flight interviewer turn as the "
+                    "final response — no second panel generated."
+                )
+            else:
+                await self._interviewer.on_message(None)
 
             # present_as_options() only *schedules* delivery. Yield so those
             # tasks run before the finally block clears session_in_progress.
@@ -787,4 +835,3 @@ class InterviewSession:
     def get_db_session_id(self) -> int:
         """Get the database session ID. Used for server mode"""
         return self.db_session_id
-        

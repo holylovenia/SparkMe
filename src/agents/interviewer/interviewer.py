@@ -182,6 +182,15 @@ class Interviewer(BaseAgent, Participant):
             self.add_event(sender=message.role, tag="message", content=message.content)
 
         self._turn_to_respond = True
+        try:
+            await self._generate_turn()
+        finally:
+            # The flag is the session's signal that this turn is still in
+            # flight — trigger_farewell() waits on it. An exception escaping
+            # here would leave it stuck True and stall the farewell.
+            self._turn_to_respond = False
+
+    async def _generate_turn(self):
         prompt = self._get_prompt()
         self.add_event(sender=self.name, tag="llm_prompt", content=prompt)
 
@@ -227,7 +236,6 @@ class Interviewer(BaseAgent, Participant):
                 "[INTERVIEWER] All engines failed or timed out.",
                 log_level="error"
             )
-            self._turn_to_respond = False
             return
 
         temp = list(zip(_model_names, _responses))
@@ -246,8 +254,6 @@ class Interviewer(BaseAgent, Participant):
         except Exception as e:
             print(f"Error presenting as options: {e}. Falling back.")
             await self._handle_response(responses[0])
-
-        self._turn_to_respond = False
 
     def get_event_stream_str_from_csv(self, filter: List[Dict[str, str]] = None, as_list: bool = False):
         '''Drop-in replacement for BaseAgent.get_event_stream_str that loads chat

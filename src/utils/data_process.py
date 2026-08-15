@@ -9,6 +9,25 @@ from src.interview_session.session_models import Message
 from src.utils.user_paths import user_logs_dir
 
 
+def _last_liked_response(ratings_file: str):
+    """The `liked_response` of the last turn already recorded in this file.
+
+    Returns None if the file doesn't exist yet or holds no turns.
+    """
+    if not os.path.exists(ratings_file):
+        return None
+
+    last = None
+    try:
+        with open(ratings_file, 'r', newline='', encoding='utf-8') as f:
+            for row in csv.DictReader(f, escapechar='\\'):
+                if row.get('liked_response'):
+                    last = row['liked_response']
+    except Exception:
+        return None      # unreadable file must never block a write
+    return last
+
+
 def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
                        rating_cultural, rating_fluency, rating_contextual,
                        rejected_options: list, user_id: str, session_id: str,
@@ -39,6 +58,16 @@ def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
                 'rejected_options', 'follow_up', 'topic', 'country',
                 'liked_model', 'rejected_options_models', 'rejected_option_message_ids'
             ])
+
+    # Idempotency guard. Every recorded turn funnels through here, and several
+    # paths can deliver the same logical turn twice: a re-sent user message, or
+    # a second option set generated for one user turn (reconnect / resume),
+    # which leaves two rating forms alive in the browser at once. Each delivery
+    # carries a fresh message_id, so only the content identifies the duplicate.
+    # Turns strictly alternate User -> Interviewer, so a row whose text repeats
+    # the previous row's is always a duplicate, never a legitimate turn.
+    if (reply_to or '') and _last_liked_response(ratings_file) == reply_to:
+        return
 
     with open(ratings_file, 'a', newline='', encoding='utf-8') as f:
         writer = csv.writer(f, quoting=csv.QUOTE_ALL, escapechar='\\')
@@ -151,4 +180,3 @@ def safe_parse_json(text: str):
         pass
     
     return None
-    
