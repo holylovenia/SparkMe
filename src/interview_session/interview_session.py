@@ -263,13 +263,21 @@ class InterviewSession:
             interview_session=self
         )
 
-        # Subscriptions of participants to each other
+        # Subscriptions of participants to each other.
+        # The SessionScribe is deliberately not subscribed: its per-turn work
+        # (_process_qa_pair) calls call_engine_async(prompt) with one argument
+        # against a two-argument signature, so it raises TypeError before
+        # reaching the LLM and its memory-bank / question-bank / agenda writes
+        # never run. Nothing reads those anyway — the interviewer builds its
+        # prompt solely from the ratings CSV (get_event_stream_str_from_csv).
+        # Subscribing it only costs prompt building and event-stream log
+        # writes on the event loop each turn, followed by a swallowed
+        # exception. The object stays constructed: run() reads
+        # session_scribe.processing_in_progress, and _check_and_trigger_report_update
+        # reads get_session_memories().
         self._subscriptions: Dict[str, List[Participant]] = {
-            # Subscribers of Interviewer: Note-taker and User (in following code)
-            "Interviewer": [self.session_scribe],
-            # Subscribers of User: Interviewer, SessionScribe, and StrategicPlanner
-            # "User": [self._interviewer, self.session_scribe, self.strategic_planner]
-            "User": [self._interviewer, self.session_scribe]
+            "Interviewer": [],
+            "User": [self._interviewer],
         }
 
         # User participant for terminal interaction

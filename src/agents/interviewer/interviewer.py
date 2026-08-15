@@ -208,8 +208,12 @@ class Interviewer(BaseAgent, Participant):
         self.engines = [_cached_engine(m, base_url, MAX_TOKENS) for m in turn_models]
 
         async def _call_with_timeout(engine, prompt):
+            # The timeout is passed in as well as wrapped around: wait_for
+            # cancels only the future, never the worker thread, so the thread
+            # needs its own deadline or it keeps retrying (and holding an
+            # executor slot) long after this turn has moved on.
             return await asyncio.wait_for(
-                self.call_engine_async(engine, prompt),
+                self.call_engine_async(engine, prompt, timeout=ENGINE_TIMEOUT),
                 timeout=ENGINE_TIMEOUT
             )
 

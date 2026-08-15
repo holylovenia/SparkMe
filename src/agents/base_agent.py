@@ -1,4 +1,5 @@
 # Python standard library imports
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Dict, List
 import asyncio
@@ -16,6 +17,16 @@ from src.utils.llm.xml_formatter import format_tool_as_xml_v2, parse_tool_calls
 from src.utils.logger.session_logger import SessionLogger
 
 # Load environment variables
+
+
+# Blocking LLM calls must not share asyncio's default executor, which is sized
+# min(32, cpu_count + 4) — six workers on a 2-vCPU box. One interviewer turn
+# fires four calls at once, so the default pool saturates and later calls queue
+# behind earlier ones instead of running in parallel.
+_ENGINE_EXECUTOR = ThreadPoolExecutor(
+    max_workers=int(os.getenv("ENGINE_MAX_WORKERS", "16")),
+    thread_name_prefix="llm-engine",
+)
 
 
 class BaseAgent:
@@ -60,9 +71,26 @@ class BaseAgent:
     def workout(self):
         pass
 
-    def _call_engine(self, engine, prompt: str):
-        '''Calls the LLM engine with the given prompt.'''
-        for attempt in range(3):
+    def _call_engine(self, engine, prompt: str, deadline: float = None):
+        '''Calls the LLM engine with the given prompt.
+
+        `deadline` is a time.monotonic() value past which no further attempt is
+        started. The caller's asyncio timeout cancels only the future, never
+        this thread, so without a deadline a retrying call keeps an executor
+        worker busy long after the turn that wanted it has given up.
+        '''
+        attempts = int(os.getenv("ENGINE_MAX_ATTEMPTS", "3"))
+        last_error = None
+
+        for attempt in range(attempts):
+            if deadline is not None and time.monotonic() >= deadline:
+                SessionLogger.log_to_file(
+                    "execution_log",
+                    f"({self.name}) Engine deadline passed before attempt "
+                    f"{attempt + 1}/{attempts} — abandoning the call.",
+                    log_level="error"
+                )
+                break
             try:
                 response = invoke_engine(engine, prompt)
 
@@ -88,8 +116,14 @@ class BaseAgent:
 
                 return response.content
             except Exception as e:
-                # Calculate exponential backoff sleep time (1s, 2s, 4s, 8s, etc.)
+                last_error = e
+                # Exponential backoff (1s, 2s, 4s, ...), trimmed to the deadline
+                # and skipped entirely after the final attempt.
+                if attempt == attempts - 1:
+                    break
                 sleep_time = 2 ** attempt
+                if deadline is not None:
+                    sleep_time = min(sleep_time, max(0.0, deadline - time.monotonic()))
                 SessionLogger.log_to_file(
                     "execution_log",
                     f"({self.name}) Failed to invoke the chain "
@@ -97,17 +131,24 @@ class BaseAgent:
                     f"Sleeping for {sleep_time} seconds before retrying...",
                     log_level="error"
                 )
-                time.sleep(sleep_time)
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
 
-        raise e
+        raise last_error if last_error is not None else RuntimeError(
+            f"({self.name}) Engine call abandoned before any attempt ran."
+        )
     
-    async def call_engine_async(self, engine, prompt: str) -> str:
-        '''Asynchronously call the LLM engine with the given prompt.'''
-        # Run call_engine in a thread pool since it's a blocking operation
+    async def call_engine_async(self, engine, prompt: str, timeout: float = None) -> str:
+        '''Asynchronously call the LLM engine with the given prompt.
+
+        `timeout` should match whatever the caller wraps this in, so the worker
+        thread stops retrying at the same moment the caller stops waiting.
+        '''
         loop = asyncio.get_running_loop()
+        deadline = (time.monotonic() + timeout) if timeout else None
         return await loop.run_in_executor(
-            None,
-            partial(self._call_engine, engine, prompt)
+            _ENGINE_EXECUTOR,
+            partial(self._call_engine, engine, prompt, deadline)
         )
         
     def add_event(self, sender: str, tag: str, content: str):
