@@ -102,7 +102,13 @@ class Interviewer(BaseAgent, Participant):
                 else:
                     model_pool.append(model_i)
             random.shuffle(model_pool)
-            return model_pool[:n_return]
+            picked = model_pool[:n_return]
+            # Callers index the result positionally. An unset MODEL_NAME_3 or
+            # MODEL_NAME_4 makes the pool short and every turn dies with
+            # IndexError, so pad to the requested length.
+            while len(picked) < n_return:
+                picked.append(f"lipsum:model-{start_index + len(picked)}")
+            return picked
 
     def _handle_quantify_response(self, quantified_response: str,
                                   original_response: str) -> Tuple[str, Rubric]:
@@ -205,6 +211,17 @@ class Interviewer(BaseAgent, Participant):
             self.config.get("model_name_4", rotating_models[1]),
         ]
         base_url = self.config.get("base_url", None)
+        # "lipsum:*" are placeholders for unconfigured slots, not real models.
+        # dict.fromkeys drops duplicates while preserving order, so a model
+        # listed twice cannot occupy two of the four candidate slots.
+        turn_models = [m for m in dict.fromkeys(turn_models) if "lipsum" not in m]
+        if not turn_models:
+            SessionLogger.log_to_file(
+                "execution_log",
+                "[INTERVIEWER] No models configured — set MODEL_NAME_1..4.",
+                log_level="error"
+            )
+            return
         self.engines = [_cached_engine(m, base_url, MAX_TOKENS) for m in turn_models]
 
         async def _call_with_timeout(engine, prompt):

@@ -1,5 +1,6 @@
 import ast
 import csv
+import threading
 import json
 import os
 import re
@@ -7,6 +8,12 @@ import re
 from datetime import datetime
 from src.interview_session.session_models import Message
 from src.utils.user_paths import user_logs_dir
+
+
+# Guards the read-then-append in save_rating_to_csv(). Flask serves requests on
+# multiple threads, so without it two concurrent writes both read the same last
+# row, both decide they are not duplicates, and both append.
+_ratings_write_lock = threading.Lock()
 
 
 def _last_liked_response(ratings_file: str):
@@ -66,18 +73,32 @@ def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
     # carries a fresh message_id, so only the content identifies the duplicate.
     # Turns strictly alternate User -> Interviewer, so a row whose text repeats
     # the previous row's is always a duplicate, never a legitimate turn.
-    if (reply_to or '') and _last_liked_response(ratings_file) == reply_to:
-        return
+    with _ratings_write_lock:
+        if (reply_to or '') and _last_liked_response(ratings_file) == reply_to:
+            return
 
+        _append_rating_row(ratings_file, message_id, reply_to,
+                           rating_cultural, rating_fluency, rating_contextual,
+                           rejected_options, topic, country, liked_model,
+                           rejected_models, rejected_message_ids)
+
+
+def _append_rating_row(ratings_file, message_id, reply_to,
+                       rating_cultural, rating_fluency, rating_contextual,
+                       rejected_options, topic, country, liked_model,
+                       rejected_models, rejected_message_ids):
     with open(ratings_file, 'a', newline='', encoding='utf-8') as f:
         writer = csv.writer(f, quoting=csv.QUOTE_ALL, escapechar='\\')
         writer.writerow([
             datetime.now().isoformat(),
             message_id,
             reply_to or '',
-            rating_fluency  if rating_fluency  is not None else '',
+            # Order must match the header: cultural, fluency, contextual.
+            # These two were transposed, so every rating collected so far has
+            # the cultural score filed under fluency and vice versa.
             rating_cultural if rating_cultural is not None else '',
-            rating_contextual if rating_contextual  is not None else '',
+            rating_fluency  if rating_fluency  is not None else '',
+            rating_contextual if rating_contextual is not None else '',
             rejected_options if rejected_options else '',
             '',                       # follow_up — feature removed, always empty
             topic    or '',

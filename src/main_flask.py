@@ -109,11 +109,31 @@ def load_users():
             return {}
     return {}
 
+# Guards read-modify-write on user_sessions.json. /api/get-messages polls every
+# 1.5s and calls mark_user_session_completed(), so two tabs (or two pollers)
+# can interleave a load and a save and lose one of the updates.
+_user_json_lock = threading.Lock()
+
+
+def _atomic_write_json(path: str, payload):
+    """Write via a temp file + os.replace.
+
+    A plain open(path, 'w') truncates first: a crash or a concurrent write
+    between truncate and flush leaves an empty or half-written file, which for
+    user_sessions.json means losing a participant's assignment list.
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.tmp"
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
 def save_users(users):
     """Save users to JSON file"""
-    os.makedirs(os.path.dirname(USERS_FILE), exist_ok=True)
-    with open(USERS_FILE, 'w') as f:
-        json.dump(users, f, indent=2)
+    _atomic_write_json(USERS_FILE, users)
 
 def hash_password(password):
     """Hash password using SHA-256"""
@@ -128,10 +148,7 @@ def load_user_sessions(user_id: str) -> list:
         return json.load(f)
 
 def save_user_sessions(user_id: str, sessions: list):
-    path = get_user_sessions_path(user_id)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(sessions, f, indent=2, ensure_ascii=False)
+    _atomic_write_json(get_user_sessions_path(user_id), sessions)
 
 def mark_user_session_completed(user_id: str, sel_session_id) -> bool:
     """Set completed=True in user_sessions.json. Idempotent — returns True
@@ -140,9 +157,11 @@ def mark_user_session_completed(user_id: str, sel_session_id) -> bool:
     if sel_session_id is None:
         return False
 
-    sessions = load_user_sessions(user_id)
-    for s in sessions:
-        if str(s.get('session_id')) == str(sel_session_id):
+    with _user_json_lock:
+        sessions = load_user_sessions(user_id)
+        for s in sessions:
+            if str(s.get('session_id')) != str(sel_session_id):
+                continue
             if s.get('completed'):
                 return False
             s['completed'] = True
@@ -1456,6 +1475,18 @@ def wait_for_agent_response(session, timeout: float = 60.0, poll_interval: float
 # SESSION CLEANUP
 # =============================================================================
 
+def _shutdown_wrapper_loop(wrapper):
+    """Stop a session's event loop so its thread can exit."""
+    loop = getattr(wrapper, 'loop', None)
+    if loop is None or loop.is_closed():
+        return
+    try:
+        wrapper.interview_session.session_in_progress = False
+        loop.call_soon_threadsafe(loop.stop)
+    except Exception as e:
+        app.logger.warning(f"Could not stop session loop: {e}")
+
+
 # cleanup_old_sessions() — evict on inactivity, and evict promptly
 # once the in-process loop has already died
 def cleanup_old_sessions():
@@ -1478,7 +1509,12 @@ def cleanup_old_sessions():
             continue
 
         if getattr(session, '_farewell_done', False) or getattr(session, '_farewell_rated', False):
-            ended_age = current_time - getattr(wrapper, 'ended_at', current_time)
+            # ended_at is only stamped by /api/end-session. A session that ends
+            # by exhausting its turns never had one, so the default made
+            # ended_age 0 and this branch could never fire. Stamp it here.
+            if not hasattr(wrapper, 'ended_at'):
+                wrapper.ended_at = current_time
+            ended_age = current_time - wrapper.ended_at
             if ended_age > 600:
                 to_remove.append(token)
 
@@ -1486,6 +1522,11 @@ def cleanup_old_sessions():
         wrapper = active_sessions.pop(token, None)
         last_messages_by_session.pop(token, None)
         if wrapper:
+            # Each session owns an event loop running run_forever() on its own
+            # thread. Dropping the wrapper does not stop either, so without
+            # this every completed session leaks a live thread for the lifetime
+            # of the process.
+            _shutdown_wrapper_loop(wrapper)
             print(f"[Cleanup] Removed session {token} (user: {wrapper.user_id})")
 
     if to_remove:

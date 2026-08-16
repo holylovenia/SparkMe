@@ -565,11 +565,24 @@
             }
         });
 
+        // Releases the input if a turn never arrives. hideTypingIndicator() is
+        // only reached when a new bot message lands, so without this a turn
+        // where every engine fails leaves the participant locked out for good.
+        let typingWatchdog = null;
+        const RESPONSE_WATCHDOG_MS = 180000;
+
         function showTypingIndicator() {
             waitingForResponse = true;
             // hideTypingIndicator() unlocks these; lock them here so the pair
             // is symmetric and the input is genuinely closed while generating.
             setChatInputsLocked(true, '⏳ Waiting for the response…');
+
+            if (typingWatchdog) clearTimeout(typingWatchdog);
+            typingWatchdog = setTimeout(() => {
+                if (!waitingForResponse) return;
+                hideTypingIndicator();
+                updateStatus('No response came back — you can send your message again.');
+            }, RESPONSE_WATCHDOG_MS);
 
             // Remove any stale indicator first
             const stale = document.getElementById('typing-indicator');
@@ -596,6 +609,7 @@
 
         function hideTypingIndicator() {
             waitingForResponse = false;
+            if (typingWatchdog) { clearTimeout(typingWatchdog); typingWatchdog = null; }
 
             const el = document.getElementById('typing-indicator');
             if (el) el.remove();
