@@ -6,6 +6,7 @@ Supports both text and voice input/output with authentication
 from flask import Flask, request, jsonify, render_template, Response, redirect, url_for, flash
 from flask_cors import CORS
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+import contextlib
 import traceback
 import asyncio
 import threading
@@ -25,6 +26,8 @@ from dotenv import load_dotenv
 # Your backend imports
 from src.interview_session.interview_session import InterviewSession
 from src.utils.data_process import save_rating_to_csv
+from src.utils.speech.speech_to_text import create_stt_engine
+from src.utils.speech.text_to_speech import create_tts_engine
 from src.utils.user_paths import get_user_country, user_data_dir, user_logs_dir
 
 load_dotenv(override=True)
@@ -313,8 +316,9 @@ def _read_csv_progress(user_id: str, sel_session_id, session_id,
         return progress
 
     try:
-        with open(ratings_file, 'r', encoding='utf-8') as f:
-            for row in _csv.DictReader(f):
+        # escapechar must match save_rating_to_csv()'s writer dialect.
+        with open(ratings_file, 'r', newline='', encoding='utf-8') as f:
+            for row in _csv.DictReader(f, escapechar='\\'):
                 if not row.get('liked_response', ''):
                     continue
                 if row.get('liked_model', '') == 'user':
@@ -370,6 +374,11 @@ def sync_completed_sessions(user_id: str) -> list:
     if changed:
         save_user_sessions(user_id, sessions)
     return sessions
+
+# Serialises start-session so two concurrent requests for the same assignment
+# cannot both miss the reuse check and build duplicate sessions on one CSV.
+_start_session_lock = threading.Lock()
+
 
 def create_interview_session(user_id: str,
                              sel_session_id: str = None,
@@ -440,6 +449,15 @@ def create_interview_session(user_id: str,
         interview_session=interview_session,
         user_id=user_id,
     )
+    # Stamp the selection metadata BEFORE publishing the wrapper. start_session()
+    # matches on wrapper.sel_session_id; if it is registered without one, a
+    # concurrent request sees a wrapper it cannot match and creates a second
+    # session for the same assignment — two InterviewSessions appending to one
+    # ratings CSV.
+    wrapper.sel_session_id = sel_session_id
+    wrapper.country        = country
+    wrapper.topic          = topic
+    wrapper.n_turns        = effective_max_turns
     active_sessions[session_token] = wrapper
 
     session_loop = asyncio.new_event_loop()
@@ -646,59 +664,66 @@ def start_session():
                     f"session_id={sel_session_id} country={sel_country} topic={sel_topic}")
 
     # Check if user already has an active session for THIS session_id.
+    # The whole check-then-create must be atomic: a double-clicked Start, or a
+    # refresh during the boot, otherwise runs the scan twice before either
+    # creates anything, and both build a session for the same assignment.
+    #
     # A wrapper whose session has already stopped must NOT be handed back:
     # it can never respond again, and cleanup_old_sessions() keeps dead
     # wrappers around for a grace window, so a refresh would otherwise land
     # on the same corpse indefinitely.
-    for token, wrapper in list(active_sessions.items()):
-        if wrapper.user_id != user_id:
-            continue
-        if getattr(wrapper, 'sel_session_id', None) != sel_session_id:
-            continue
+    with _start_session_lock:
+        reuse = None
+        for token, wrapper in list(active_sessions.items()):
+            if wrapper.user_id != user_id:
+                continue
+            if getattr(wrapper, 'sel_session_id', None) != sel_session_id:
+                continue
 
-        existing = wrapper.interview_session
-        farewell_pending = (
-            getattr(existing, '_farewell_done', False)
-            and not getattr(existing, '_farewell_rated', False)
-        )
+            existing = wrapper.interview_session
+            farewell_pending = (
+                getattr(existing, '_farewell_done', False)
+                and not getattr(existing, '_farewell_rated', False)
+            )
 
-        if existing.session_in_progress or farewell_pending:
-            app.logger.info(f"Returning existing session {token} for user {current_user.username}")
-            return jsonify({
-                'success': True,
-                'session_token': token,
-                'session_id': existing.session_id,
-                'user_id': user_id,
-                'username': current_user.username,
-                'message': 'Using existing session',
-                'was_existing': True
-            })
+            if existing.session_in_progress or farewell_pending:
+                app.logger.info(
+                    f"Returning existing session {token} for user {current_user.username}")
+                reuse = (token, existing)
+                break
 
-        app.logger.info(
-            f"Discarding dead session {token} for sel_session_id={sel_session_id} "
-            f"(in_progress={existing.session_in_progress}, "
-            f"farewell_rated={getattr(existing, '_farewell_rated', False)}) — "
-            f"rebuilding from CSV"
-        )
-        active_sessions.pop(token, None)
-        last_messages_by_session.pop(token, None)
-        break
+            app.logger.info(
+                f"Discarding dead session {token} for sel_session_id={sel_session_id} "
+                f"(in_progress={existing.session_in_progress}, "
+                f"farewell_rated={getattr(existing, '_farewell_rated', False)}) — "
+                f"rebuilding from CSV"
+            )
+            active_sessions.pop(token, None)
+            last_messages_by_session.pop(token, None)
+            break
 
-    # Create new session with the selected parameters
-    interview_session, session_token = create_interview_session(
-        user_id=user_id,
-        sel_session_id=sel_session_id,
-        country=sel_country,
-        topic=sel_topic,
-        n_turns=sel_n_turns
-    )
+        if reuse is None:
+            # create_interview_session() stamps sel_session_id/country/topic on
+            # the wrapper before publishing it, so the scan above is reliable.
+            interview_session, session_token = create_interview_session(
+                user_id=user_id,
+                sel_session_id=sel_session_id,
+                country=sel_country,
+                topic=sel_topic,
+                n_turns=sel_n_turns
+            )
 
-    # Store selection metadata on the wrapper for reuse checks
-    wrapper = active_sessions[session_token]
-    wrapper.sel_session_id = sel_session_id
-    wrapper.country = sel_country
-    wrapper.topic = sel_topic
-    wrapper.n_turns = sel_n_turns
+    if reuse is not None:
+        token, existing = reuse
+        return jsonify({
+            'success': True,
+            'session_token': token,
+            'session_id': existing.session_id,
+            'user_id': user_id,
+            'username': current_user.username,
+            'message': 'Using existing session',
+            'was_existing': True
+        })
 
     app.logger.info(f"Session created: {session_token} | User: {current_user.username} "
                     f"| sel_session_id={sel_session_id}")
@@ -899,14 +924,18 @@ def acknowledge_messages():
 
     if session.user and hasattr(session.user, '_message_buffer'):
         lock = getattr(session.user, '_lock', None)
-        if lock:
-            with lock:
-                buffer = getattr(session.user, '_message_buffer', [])
-                session.user._message_buffer = [
-                    m for m in buffer 
-                    if m.get('id') not in message_ids
-                ]
-        
+        # contextlib.nullcontext keeps the filter running even when the
+        # participant has no lock. The old `if lock:` had no else branch, so a
+        # lock-less participant acknowledged nothing and every past option set
+        # came back on the next reconnect.
+        with (lock or contextlib.nullcontext()):
+            buffer = getattr(session.user, '_message_buffer', [])
+            session.user._message_buffer = [
+                m for m in buffer
+                if m.get('id') not in message_ids
+            ]
+
+
     return jsonify({'success': True})
 
 # Stub
@@ -1111,8 +1140,9 @@ def session_history():
     last_speaker = None
 
     try:
-        with open(ratings_file, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
+        # escapechar must match save_rating_to_csv()'s writer dialect.
+        with open(ratings_file, 'r', newline='', encoding='utf-8') as f:
+            reader = csv.DictReader(f, escapechar='\\')
             for i, row in enumerate(reader):
                 liked_model    = row.get('liked_model', '')
                 liked_response = row.get('liked_response', '')
@@ -1308,7 +1338,13 @@ def process_audio():
     audio_file.save(temp_audio_path)
 
     try:
-        transcribed_text = transcribe_audio_to_text(temp_audio_path)
+        stt_engine = create_stt_engine()
+        if stt_engine is None:
+            return jsonify({
+                'success': False,
+                'error': 'Voice input is not available on this deployment.'
+            }), 503
+        transcribed_text = stt_engine.transcribe(str(temp_audio_path))
         wrapper = get_session_wrapper(session_token)
         if wrapper and hasattr(wrapper, 'loop'):
             wrapper.loop.call_soon_threadsafe(
@@ -1326,11 +1362,22 @@ def process_audio():
         }
 
         if bot_reply:
+            # create_tts_engine raises on an unknown provider, and synthesis
+            # can fail on its own. Neither should lose the reply — fall through
+            # to the JSON response so the text still reaches the client.
             out_path = Path(f"temp_speech_{uuid.uuid4().hex}.mp3")
-            generate_speech_from_text(bot_reply, out_path)
-            audio_bytes = out_path.read_bytes()
-            out_path.unlink(missing_ok=True)
-            return Response(audio_bytes, mimetype='audio/mpeg')
+            try:
+                tts_engine = create_tts_engine(
+                    provider=os.getenv('TTS_PROVIDER', 'openai'),
+                    voice=os.getenv('TTS_VOICE', 'alloy'),
+                )
+                tts_engine.text_to_speech(bot_reply, str(out_path))
+                audio_bytes = out_path.read_bytes()
+                return Response(audio_bytes, mimetype='audio/mpeg')
+            except Exception as tts_err:
+                app.logger.warning(f"TTS failed, returning text only: {tts_err}")
+            finally:
+                out_path.unlink(missing_ok=True)
 
         return jsonify({
             'success': True, 

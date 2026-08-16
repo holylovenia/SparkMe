@@ -3,7 +3,7 @@ import csv
 import os
 import random
 import re
-from typing import TYPE_CHECKING, TypedDict, Tuple
+from typing import TYPE_CHECKING, Dict, List, TypedDict, Tuple
 
 import json
 
@@ -292,8 +292,11 @@ class Interviewer(BaseAgent, Participant):
         if not os.path.exists(ratings_file):
             return events if as_list else ""
 
-        with open(ratings_file, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
+        # escapechar must match save_rating_to_csv()'s writer. Without it the
+        # reader hands back every backslash doubled, so any response containing
+        # one reaches the prompt corrupted.
+        with open(ratings_file, 'r', newline='', encoding='utf-8') as f:
+            reader = csv.DictReader(f, escapechar='\\')
             for row in reader:
                 liked_response = row.get('liked_response', '')
                 liked_model    = row.get('liked_model', '')

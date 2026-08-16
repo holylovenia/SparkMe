@@ -402,11 +402,16 @@ class InterviewSession:
             self._farewell_done and not self._farewell_rated
         )
 
-    def present_as_options(self, role: str, content: list[str] = [],
+    def present_as_options(self, role: str, content: list[str] = None,
                        message_type: str = MessageType.OPTION,
-                       metadata: dict = {},
-                       model_names: list[str] = []):
+                       metadata: dict = None,
+                       model_names: list[str] = None):
         """Present message as options"""
+        # Mutable defaults are shared across every call; bind per-call instead.
+        content     = list(content)     if content     else []
+        model_names = list(model_names) if model_names else []
+        metadata    = dict(metadata)    if metadata    else {}
+
         if self._farewell_done:
             return
 

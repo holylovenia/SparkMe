@@ -175,7 +175,7 @@ class Report:
         return max(versions) if versions else 0
 
     @classmethod
-    def load_from_file(cls, user_id: str, version: int = -1, base_path: Optional[str] = None) -> 'report':
+    def load_from_file(cls, user_id: str, version: int = -1, base_path: Optional[str] = None) -> 'Report':
         """Load a report from file or create new one if it doesn't exist.
         
         Args:

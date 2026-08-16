@@ -130,7 +130,18 @@
         // ===================================================================
         // RATING FORM BUILDER
         // ===================================================================
-        function buildRatingForm(msgDiv, messageId) {
+        function buildRatingForm(msgDiv, messageId, turn) {
+            // `turn` snapshots this option set at like-time. These used to be
+            // read from the lastLiked*/lastRejected* globals at SUBMIT time, so
+            // whenever two rating forms were open at once (a second option set
+            // arriving for one question), both submissions wrote the newest
+            // globals — producing two CSV rows with identical liked_response
+            // but different message_id, and a liked_model looked up from the
+            // other set's map (the liked model appearing in its own rejected
+            // list). Capturing per form keeps each row self-consistent.
+            const likedText   = turn.likedText;
+            const rejectedTxt = turn.rejectedOptions;
+            const rejectedIds = turn.rejectedMessageIds;
             return new Promise((resolve) => {
                 const uid = messageId.replace(/[^a-zA-Z0-9]/g, '_');
                 const form = document.createElement('div');
@@ -200,9 +211,9 @@
                             body: JSON.stringify({
                                 session_token: sessionToken,
                                 message_id: messageId,
-                                reply_to: lastLikedMessageText,
-                                rejected_options: lastRejectedOptions,
-                                rejected_message_ids: lastRejectedMessageIds,
+                                reply_to: likedText,
+                                rejected_options: rejectedTxt,
+                                rejected_message_ids: rejectedIds,
                                 rating_cultural: cultural,
                                 rating_fluency: fluency,
                                 rating_contextual: contextual,
@@ -231,7 +242,7 @@
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
                                     session_token: sessionToken,
-                                    message_ids: [messageId, ...lastRejectedMessageIds],
+                                    message_ids: [messageId, ...rejectedIds],
                                 }),
                             });
                         } catch (ackErr) {
@@ -309,7 +320,12 @@
                     });
 
                     likeBtn.remove();
-                    await buildRatingForm(msgDiv, messageId);
+                    const turn = {
+                        likedText: lastLikedMessageText,
+                        rejectedOptions: lastRejectedOptions.slice(),
+                        rejectedMessageIds: lastRejectedMessageIds.slice(),
+                    };
+                    await buildRatingForm(msgDiv, messageId, turn);
                     pendingLikeCount--;
                     refreshLikeLock();
                 });
@@ -491,6 +507,15 @@
         document.getElementById('chat-form').onsubmit = async function (event) {
             event.preventDefault();
             if (isSessionCompleted) { updateStatus('Session has ended.'); return; }
+            // A turn takes tens of seconds to generate. Without this guard the
+            // input stays live throughout, so a second Enter re-sends the same
+            // text: a duplicate user row in the ratings CSV and a second
+            // interviewer trigger for one question.
+            if (waitingForResponse) {
+                updateStatus('⏳ Still waiting for the previous response…');
+                setTimeout(() => updateStatus(''), 2500);
+                return;
+            }
             if (pendingLikeCount > 0) {
                 updateStatus('⭐ Please rate the response above before continuing.');
                 setTimeout(() => updateStatus(''), 2500);
@@ -542,6 +567,9 @@
 
         function showTypingIndicator() {
             waitingForResponse = true;
+            // hideTypingIndicator() unlocks these; lock them here so the pair
+            // is symmetric and the input is genuinely closed while generating.
+            setChatInputsLocked(true, '⏳ Waiting for the response…');
 
             // Remove any stale indicator first
             const stale = document.getElementById('typing-indicator');
