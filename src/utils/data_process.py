@@ -65,6 +65,7 @@ def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
                 'rejected_options', 'follow_up', 'topic', 'country',
                 'liked_model', 'rejected_options_models', 'rejected_option_message_ids'
             ])
+        os.system(f"chmod 777 {ratings_file}")
 
     # Idempotency guard. Every recorded turn funnels through here, and several
     # paths can deliver the same logical turn twice: a re-sent user message, or
@@ -107,6 +108,7 @@ def _append_rating_row(ratings_file, message_id, reply_to,
             rejected_models if rejected_models else '',
             rejected_message_ids if rejected_message_ids else '',
         ])
+    os.system(f"chmod 777 {ratings_file}")
 
 
 def save_feedback_to_csv(interviewer_message, feedback_message, user_id: str, session_id: str,

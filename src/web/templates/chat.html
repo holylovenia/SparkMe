@@ -33,7 +33,7 @@
                     </ul>
                 </li>
                 <li>
-                    After each input, select the response that <strong>best addresses your input</strong> by clicking the 👍 button, then rate it on <strong>MSA Fluency</strong> and <strong>Cultural Appropriateness and Respectfulness</strong>. One star is the lowest rating, five stars is the highest. You can check the rubric's definitions and examples <a href="https://docs.google.com/spreadsheets/d/1KwRvVFULi1fplRMWKIABSBiHh4L4AzdyM1Fop5R47JE/edit?usp=sharing" target="_blank" style="margin: 0; padding: 1px 2px;">here</a>.
+                    After each input, select the response that <strong>best addresses your input</strong> by clicking the 👍 button, then rate it on <strong>MSA Fluency</strong> and <strong>Cultural Appropriateness and Respectfulness</strong>. One star is the lowest rating, five stars is the highest. If you change your mind before submitting the rating, click <strong>Cancel</strong> to bring all the responses back and pick a different one. You can check the rubric's definitions and examples <a href="https://docs.google.com/spreadsheets/d/1KwRvVFULi1fplRMWKIABSBiHh4L4AzdyM1Fop5R47JE/edit?usp=sharing" target="_blank" style="margin: 0; padding: 1px 2px;">here</a>.
                 </li>
                 <li>Please note that all output responses are expected to be in Modern Standard Arabic (MSA). A response that is not in MSA can still be the best response if it addresses the input more effectively than the others — select the best overall response based on how well it responds, and rate its MSA fluency separately.</li>
                 <li>Continue the conversation based on the previous inputs and responses, until you are informed that the session has ended.</li>
@@ -147,7 +147,7 @@
                 const form = document.createElement('div');
                 form.className = 'rating-form';
                 form.innerHTML = `
-                    <p>Rate this response</p>
+                    <p>Rate this response — or cancel to choose a different one</p>
                     <div class="rating-row">
                         <label>MSA Fluency</label>
                         <div class="star-group" id="fluency-stars-${uid}">
@@ -178,12 +178,19 @@
                             <input type="radio" name="contextual_${uid}" id="ctx1_${uid}" value="1"><label for="ctx1_${uid}">★</label>
                         </div>
                     </div>
-                    <button class="rating-submit-btn" type="button" disabled>Submit rating</button>
+                    <div class="rating-actions" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                        <button class="rating-submit-btn" type="button" disabled>Submit rating</button>
+                        <button class="rating-cancel-btn" type="button"
+                                style="background:transparent; border:1px solid #bbb; border-radius:6px;
+                                       padding:7px 14px; font-size:13px; font-weight:600; color:#666;
+                                       cursor:pointer;">↩ Cancel — pick another response</button>
+                    </div>
                 `;
                 msgDiv.appendChild(form);
                 scrollToBottom();
 
                 const submitBtn = form.querySelector('.rating-submit-btn');
+                const cancelBtn = form.querySelector('.rating-cancel-btn');
                 function checkReady() {
                     const hasCultural = form.querySelector(`input[name="cultural_${uid}"]:checked`);
                     const hasFluency = form.querySelector(`input[name="fluency_${uid}"]:checked`);
@@ -191,6 +198,15 @@
                     submitBtn.disabled = !(hasCultural && hasFluency && hasContextual);
                 }
                 form.querySelectorAll('input[type="radio"]').forEach(r => r.addEventListener('change', checkReady));
+
+                // Undo the like while nothing has been written yet. Nothing has
+                // been POSTed at this point, so tearing the form down and letting
+                // the caller restore the hidden options is enough — no CSV row,
+                // no acknowledge, no state to reconcile with the backend.
+                cancelBtn.addEventListener('click', () => {
+                    form.remove();
+                    resolve({ cancelled: true });
+                });
 
                 submitBtn.addEventListener('click', async () => {
                     const cultural = parseInt(form.querySelector(`input[name="cultural_${uid}"]:checked`).value, 10);
@@ -200,6 +216,10 @@
                     lastRatingFluency = fluency;
                     lastRatingContextual = contextual;
                     submitBtn.disabled = true;
+                    // Past this point the choice is being committed; cancelling
+                    // would restore options for a turn that already has a row.
+                    cancelBtn.disabled = true;
+                    cancelBtn.style.display = 'none';
                     submitBtn.textContent = 'Submitting…';
 
                     let systemMessage = null;
@@ -252,7 +272,7 @@
 
                     form.innerHTML = `<span class="rating-done-badge">✓ Rated — cultural: ${cultural}/5 · fluency: ${fluency}/5 · contextual: ${contextual}/5</span>`;
                     if (systemMessage) appendSystemMessage(systemMessage);
-                    resolve({ cultural, fluency, contextual });
+                    resolve({ cancelled: false, cultural, fluency, contextual });
                 });
             });
         }
@@ -304,9 +324,21 @@
                 likeBtn.addEventListener('click', async () => {
                     const prefix = messageId.substring(0, messageId.lastIndexOf('|'));
                     const textParagraph = msgDiv.querySelector('p');
+
+                    // A like is provisional until the rating is submitted, so the
+                    // pre-like globals are kept and put back if it is cancelled.
+                    const prevLikedText  = lastLikedMessageText;
+                    const prevRejected   = lastRejectedOptions;
+                    const prevRejectedId = lastRejectedMessageIds;
+
                     lastLikedMessageText = textParagraph ? textParagraph.innerText : null;
                     lastRejectedOptions = [];
                     lastRejectedMessageIds = [];
+
+                    // The siblings are hidden rather than removed, so cancelling
+                    // can put the full option set back in its original order with
+                    // its own like handlers intact.
+                    const hiddenSiblings = [];
 
                     document.querySelectorAll('#chat-box .message[data-msg-id]').forEach(el => {
                         const elId = el.dataset.msgId;
@@ -314,18 +346,44 @@
                             const siblingText = el.querySelector('p');
                             if (siblingText) lastRejectedOptions.push(siblingText.innerText);
                             lastRejectedMessageIds.push(elId);
-                            if (el.querySelector('.like-btn')) pendingLikeCount--;
-                            el.remove();
+                            const hadLikeBtn = !!el.querySelector('.like-btn');
+                            if (hadLikeBtn) pendingLikeCount--;
+                            el.style.display = 'none';
+                            hiddenSiblings.push({ el, hadLikeBtn });
                         }
                     });
 
-                    likeBtn.remove();
+                    likeBtn.style.display = 'none';
+                    msgDiv.classList.add('like-pending');
+
                     const turn = {
                         likedText: lastLikedMessageText,
                         rejectedOptions: lastRejectedOptions.slice(),
                         rejectedMessageIds: lastRejectedMessageIds.slice(),
                     };
-                    await buildRatingForm(msgDiv, messageId, turn);
+                    const outcome = await buildRatingForm(msgDiv, messageId, turn);
+
+                    if (outcome && outcome.cancelled) {
+                        // Put the turn back exactly as it was before the like.
+                        hiddenSiblings.forEach(({ el, hadLikeBtn }) => {
+                            el.style.display = '';
+                            if (hadLikeBtn) pendingLikeCount++;
+                        });
+                        likeBtn.style.display = '';
+                        msgDiv.classList.remove('like-pending');
+
+                        lastLikedMessageText   = prevLikedText;
+                        lastRejectedOptions    = prevRejected;
+                        lastRejectedMessageIds = prevRejectedId;
+
+                        refreshLikeLock();
+                        scrollToBottom();
+                        return;   // this message still owes a like — count untouched
+                    }
+
+                    // Rating committed — the rejected siblings are now final.
+                    hiddenSiblings.forEach(({ el }) => el.remove());
+                    msgDiv.classList.remove('like-pending');
                     pendingLikeCount--;
                     refreshLikeLock();
                 });

@@ -66,6 +66,37 @@
         .empty-msg { text-align: center; color: #999; padding: 40px 0; }
         .all-done { text-align: center; color: #4caf50; padding: 20px 0; font-weight: 600; }
 
+        /* ── Section grouping ───────────────────────────────────────────── */
+        .section { margin-bottom: 24px; }
+        .section:last-child { margin-bottom: 0; }
+        .section-label {
+            font-size: 13px; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.6px; color: #999;
+            margin-bottom: 12px;
+        }
+
+        /* ── Collapsible header for completed sessions ──────────────────── */
+        .collapse-toggle {
+            display: flex; align-items: center; gap: 10px;
+            width: 100%; padding: 12px 16px;
+            background: #f0faf0; border: 1px solid #c3e6c3;
+            border-radius: 8px;
+            font-family: inherit; font-size: 14px; font-weight: 600;
+            color: #2e7d32; text-align: left; cursor: pointer;
+            transition: background 0.2s;
+        }
+        .collapse-toggle:hover { background: #e3f5e3; }
+        .collapse-toggle .chevron {
+            display: inline-block; font-size: 11px;
+            transition: transform 0.2s;
+        }
+        .collapse-toggle[aria-expanded="true"] .chevron { transform: rotate(90deg); }
+        .collapse-toggle .toggle-hint {
+            margin-left: auto; font-weight: 500; font-size: 12px; color: #6a9c6a;
+        }
+        #completed-list { margin-top: 12px; }
+        #completed-list[hidden] { display: none; }
+
         /* ── About button ───────────────────────────────────────────────── */
         .about-btn {
             padding: 8px 16px;
@@ -135,9 +166,24 @@
         <h1>📋 Your Interview Sessions</h1>
         <p class="subtitle">Select a session to begin the interview.</p>
 
-        <ul class="session-list" id="session-list">
-            <li class="empty-msg" id="loading-msg">Loading sessions…</li>
-        </ul>
+        <!-- ── Completed sessions (collapsed by default) ──────────────── -->
+        <div class="section" id="completed-section" style="display:none;">
+            <button class="collapse-toggle" id="completed-toggle" aria-expanded="false" aria-controls="completed-list">
+                <span class="chevron">▶</span>
+                <span>✓ Completed (<span id="completed-count">0</span>)</span>
+                <span class="toggle-hint" id="completed-hint">Show</span>
+            </button>
+            <ul class="session-list" id="completed-list" hidden></ul>
+        </div>
+
+        <!-- ── Remaining sessions ─────────────────────────────────────── -->
+        <div class="section" id="pending-section">
+            <div class="section-label" id="pending-label" style="display:none;">Remaining</div>
+            <ul class="session-list" id="session-list">
+                <li class="empty-msg" id="loading-msg">Loading sessions…</li>
+            </ul>
+        </div>
+
         <div id="all-done-msg" class="all-done" style="display:none;">
             🎉 All sessions completed! Thank you for your participation.
         </div>
@@ -193,58 +239,91 @@
             }
         });
 
+        function setCompletedExpanded(expanded) {
+            const toggle = document.getElementById('completed-toggle');
+            const list   = document.getElementById('completed-list');
+            toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+            list.hidden = !expanded;
+            document.getElementById('completed-hint').textContent = expanded ? 'Hide' : 'Show';
+        }
+
+        function buildSessionItem(s) {
+            const li = document.createElement('li');
+            li.className = 'session-item' + (s.completed ? ' completed' : '');
+
+            const chatUrl = `/chat?session_id=${encodeURIComponent(s.session_id)}`
+                + `&country=${encodeURIComponent(s.country)}`
+                + `&topic=${encodeURIComponent(s.topic)}`
+                + `&n_turns=${s.n_turns}`;
+
+            li.innerHTML = `
+                <div class="session-info">
+                    <div class="id-label">Session: ${s.session_id}</div>
+                    <div class="details">
+                        <span>🌍 ${s.country}</span>
+                        <span>📌 ${s.topic.replace(/_/g, ' ')}</span>
+                        <span>💬 ${s.n_turns} turns</span>
+                        <div style="padding-right: 0.5em;">❓ ${s.first_prompt}</div>
+                    </div>
+                </div>
+                ${s.completed
+                    ? '<span class="badge-completed">✓ Completed</span>'
+                    : '<a href="' + chatUrl + '" class="start-btn">Start →</a>'}
+            `;
+            return li;
+        }
+
         async function loadSessions() {
+            const pendingList     = document.getElementById('session-list');
+            const completedList   = document.getElementById('completed-list');
+            const completedBlock  = document.getElementById('completed-section');
+            const pendingLabel    = document.getElementById('pending-label');
+
             try {
                 const resp = await fetch('/api/get-user-sessions');
                 const data = await resp.json();
-                const list = document.getElementById('session-list');
-                list.innerHTML = '';
+
+                pendingList.innerHTML = '';
+                completedList.innerHTML = '';
+                completedBlock.style.display = 'none';
+                pendingLabel.style.display = 'none';
 
                 if (!data.success || !data.sessions || data.sessions.length === 0) {
-                    list.innerHTML = '<li class="empty-msg">No sessions assigned yet.</li>';
+                    pendingList.innerHTML = '<li class="empty-msg">No sessions assigned yet.</li>';
                     return;
                 }
 
-                let allDone = true;
-                data.sessions.forEach(s => {
-                    if (!s.completed) allDone = false;
+                const completed = data.sessions.filter(s => s.completed);
+                const pending   = data.sessions.filter(s => !s.completed);
 
-                    const li = document.createElement('li');
-                    li.className = 'session-item' + (s.completed ? ' completed' : '');
+                // Completed sessions go first, inside the collapsible block.
+                if (completed.length > 0) {
+                    completed.forEach(s => completedList.appendChild(buildSessionItem(s)));
+                    document.getElementById('completed-count').textContent = completed.length;
+                    completedBlock.style.display = 'block';
+                    // Keep it collapsed unless there is nothing left to do.
+                    setCompletedExpanded(pending.length === 0);
+                }
 
-                    const chatUrl = `/chat?session_id=${encodeURIComponent(s.session_id)}`
-                        + `&country=${encodeURIComponent(s.country)}`
-                        + `&topic=${encodeURIComponent(s.topic)}`
-                        + `&n_turns=${s.n_turns}`;
-
-                    li.innerHTML = `
-                        <div class="session-info">
-                            <div class="id-label">Session: ${s.session_id}</div>
-                            <div class="details">
-                                <span>🌍 ${s.country}</span>
-                                <span>📌 ${s.topic.replace(/_/g, ' ')}</span>
-                                <span>💬 ${s.n_turns} turns</span>
-                                <div style="padding-right: 0.5em;">❓ ${s.first_prompt}</div>
-                            </div>
-                        </div>
-                        ${s.completed
-                            ? '<span class="badge-completed">✓ Completed</span>'
-                            : '<a href="' + chatUrl + '" class="start-btn">Start →</a>'}
-                    `;
-                    list.appendChild(li);
-                });
-
-                if (allDone) {
+                if (pending.length > 0) {
+                    pending.forEach(s => pendingList.appendChild(buildSessionItem(s)));
+                    // Only label the group when both groups are on screen.
+                    pendingLabel.style.display = completed.length > 0 ? 'block' : 'none';
+                } else {
                     document.getElementById('all-done-msg').style.display = 'block';
                 }
             } catch (e) {
                 console.error('Error loading sessions:', e);
-                document.getElementById('session-list').innerHTML =
-                    '<li class="empty-msg">Error loading sessions.</li>';
+                pendingList.innerHTML = '<li class="empty-msg">Error loading sessions.</li>';
             }
         }
 
-        document.addEventListener('DOMContentLoaded', loadSessions);
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('completed-toggle').addEventListener('click', function() {
+                setCompletedExpanded(this.getAttribute('aria-expanded') !== 'true');
+            });
+            loadSessions();
+        });
     </script>
 </body>
 </html>

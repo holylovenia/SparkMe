@@ -149,6 +149,7 @@ def load_user_sessions(user_id: str) -> list:
 
 def save_user_sessions(user_id: str, sessions: list):
     _atomic_write_json(get_user_sessions_path(user_id), sessions)
+    os.system(f"chmod 777 {get_user_sessions_path(user_id)}")
 
 def mark_user_session_completed(user_id: str, sel_session_id) -> bool:
     """Set completed=True in user_sessions.json. Idempotent — returns True
@@ -239,6 +240,7 @@ def save_survey(user_id: str, data: dict):
     data['completed_at'] = time.time()
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2)
+    os.system(f"chmod 777 {path}")
 
 def survey_completed(user_id: str) -> bool:
     data     = load_survey(user_id)
@@ -588,8 +590,8 @@ def register():
         # Create user directories (grouped under a per-country folder)
         os.makedirs(user_logs_dir(user_id, country=country), exist_ok=True)
         os.makedirs(user_data_dir(user_id, country=country), exist_ok=True)
-        os.chmod(user_logs_dir(user_id, country=country), 0o777)
-        os.chmod(user_data_dir(user_id, country=country), 0o777)
+        os.system(f"chmod -R 777 {user_logs_dir(user_id, country=country)}")
+        os.system(f"chmod -R 777 {user_data_dir(user_id, country=country)}")
 
         app.logger.info(f"New user registered: {username} ({user_id}) from {country}")
         flash('Registration successful! Please login.', 'success')
