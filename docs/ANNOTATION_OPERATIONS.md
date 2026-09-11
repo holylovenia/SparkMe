@@ -173,5 +173,4 @@ The columns in the ratings CSV are explained in the [root README](../README.md#d
 
 **Before you analyse the data:**
 
-- CSVs written before 2026-08-16 have the `rating_cultural` and `rating_fluency` columns swapped. See the root README.
 - For annotators registered as **KSA**, the ratings are under `data/logs/saudi_arabia/<user_id>/`, while their survey and session list are under `data/data/ksa/<user_id>/`.
