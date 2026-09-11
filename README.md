@@ -1,10 +1,14 @@
-# SparkMe — Arabic Cultural Chat Annotation (RDI Grant)
+# SparkMe — Arabic Cultural Chat Annotation
 
 A Flask web app for collecting human preference ratings of LLM responses on Arabic cultural topics.
 
 Each participant (annotator) logs in, completes a demographic survey, and works through a list of pre-assigned chat sessions. A session is seeded from a [PALM](https://huggingface.co/datasets/UBC-NLP/palm) prompt for one **country** and **topic**. On every turn, up to **4 different LLMs** answer in parallel. The annotator picks the best answer, rates it on three 1–5 scales, and the picked answer becomes the conversation history for the next turn. Everything is written to one CSV per session.
 
-> **Fork note.** This repo is forked from [SALT-NLP/SparkMe](https://github.com/SALT-NLP/SparkMe), a multi-agent interview system. Most of that machinery (session scribe, strategic planner, report team, memory/question banks) is still in the tree but **dormant**: it is constructed and never used. The upstream README is kept at [`docs/UPSTREAM_SPARKME.md`](docs/UPSTREAM_SPARKME.md). See [`src/README.md`](src/README.md) for which code is live and which is not.
+> **Fork note.** This repo is forked from [SALT-NLP/SparkMe](https://github.com/SALT-NLP/SparkMe), a multi-agent interview system. Most of that machinery (session scribe, strategic planner, report team, memory/question banks) is still in the tree but **dormant**: it is constructed and never used. The upstream README is kept at [`docs/UPSTREAM_SPARKME.md`](docs/UPSTREAM_SPARKME.md).
+
+See [`src/README.md`](src/README.md) for which code is live and which is not.
+
+See [`docs/ANNOTATION_OPERATIONS.md`](docs/ANNOTATION_OPERATIONS.md) for usage guidelines for country representatives.
 
 ---
 
