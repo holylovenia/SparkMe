@@ -34,7 +34,7 @@ Requirements
 
 PALM is a gated dataset. Before running this script:
     1. Accept the terms at https://huggingface.co/datasets/UBC-NLP/palm
-    2. Run `huggingface-cli login` (or set the HF_TOKEN env var)
+    2. Run `hf auth login` (or set the HF_TOKEN env var)
 
 Usage (from the repo root)
 -----
@@ -49,8 +49,8 @@ Usage (from the repo root)
 
 Next step: copy a batch file to
     DATA_DIR/<country_slug>/<user_id>/user_sessions.json
-(append later batches to it; do not overwrite -- `completed` flags live there).
-See scripts/README.md.
+For the next batch, rename the finished file (e.g. user_sessions_batch0.json)
+and copy the new batch in. See docs/ANNOTATION_OPERATIONS.md.
 
 Note: COUNTRIES uses "Saudi Arabia" while the registration form uses "KSA".
 """

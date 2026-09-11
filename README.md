@@ -26,11 +26,13 @@ Open `http://<host>:5000/login`. The health check is at `/health`.
 
 ## Running a study: the operator workflow
 
+The step-by-step version, including server access and annotator screening, is in [`docs/ANNOTATION_OPERATIONS.md`](docs/ANNOTATION_OPERATIONS.md).
+
 | # | Step | How |
 |---|------|-----|
 | 1 | **Generate session lists** for each annotator from PALM | `scripts/generate_user_sessions_file.py` (see [`scripts/README.md`](scripts/README.md)) |
 | 2 | **Annotator registers** at `/register`: username, password, country | Writes `DATA_DIR/users.json` and creates their folders |
-| 3 | **Assign sessions**: copy a generated batch file to `DATA_DIR/<country_slug>/<user_id>/user_sessions.json` | Manual. `user_id` is the key in `users.json`. For later batches, append the new entries and keep the existing ones: `completed` flags live in this file |
+| 3 | **Assign sessions**: copy a generated batch file to `DATA_DIR/<country_slug>/<user_id>/user_sessions.json` | Manual. `user_id` is the key in `users.json`. For the next batch, rename the finished file (e.g. `user_sessions_batch0.json`) and copy the new batch in |
 | 4 | **Annotator works**: survey, then session list, then chat | See the flow below |
 | 5 | **Collect data** from `LOGS_DIR/<country_slug>/<user_id>/ratings/*.csv` | One CSV per assigned session |
 | 6 | **Clean up** when needed | `scripts/delete_users.py` (dry run unless `--apply`), `scripts/dedup_ratings_csv.py` (**writes** unless `--dry-run`) |

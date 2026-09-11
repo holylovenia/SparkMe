@@ -17,7 +17,7 @@ Run these from the **repo root**. They read `DATA_DIR` / `LOGS_DIR` from `.env`.
 
 `generate_user_sessions_file.sh` is an example invocation, meant to be run from inside `scripts/`.
 
-`datasets` and `huggingface_hub` are in `requirements.txt`. You also need access to the gated PALM dataset. Accept the terms on Hugging Face, then run `huggingface-cli login`.
+`datasets` and `huggingface_hub` are in `requirements.txt`. You also need access to the gated PALM dataset. Accept the terms on Hugging Face, then run `hf auth login` (or set `HF_TOKEN`).
 
 ```bash
 # See how much open-ended PALM data exists per (country, topic)
@@ -50,7 +50,7 @@ cp out/sessions_Lebanon_annotator0_batch0.json \
    "$DATA_DIR/lebanon/<user_id>/user_sessions.json"
 ```
 
-`<user_id>` is the annotator's key in `DATA_DIR/users.json`, and the folder name is the lower-cased country. To release a later batch, **append** its entries to the existing `user_sessions.json`. Don't replace the file: the `completed` flags live there.
+`<user_id>` is the annotator's key in `DATA_DIR/users.json`, and the folder name is the lower-cased country. To release the next batch, rename the finished file (e.g. `user_sessions_batch0.json`) and copy the new batch in as `user_sessions.json`. Session IDs are unique across batches, so nothing collides. The full procedure is in [`docs/ANNOTATION_OPERATIONS.md`](../docs/ANNOTATION_OPERATIONS.md).
 
 > The generator's country list uses `Saudi Arabia`, while registration uses `KSA`. See "Known issues" in the root README.
 
