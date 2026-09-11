@@ -1,254 +1,168 @@
-# SparkMe
+# SparkMe — Arabic Cultural Chat Annotation (RDI Grant)
 
-<p align="center">
-  <img src="./assets/main-diagram.png" alt="SparkMe Diagram" width="80%"/>
-</p>
+A Flask web app for collecting human preference ratings of LLM responses on Arabic cultural topics.
 
-An multi-agent semi-structured interview system that conducts multi-turn interviews with strategic question planning, real-time note-taking, and emergent subtopic discovery. Supports both terminal and web interfaces.
+Each participant (annotator) logs in, completes a demographic survey, and works through a list of pre-assigned chat sessions. A session is seeded from a [PALM](https://huggingface.co/datasets/UBC-NLP/palm) prompt for one **country** and **topic**. On every turn, up to **4 different LLMs** answer in parallel. The annotator picks the best answer, rates it on three 1–5 scales, and the picked answer becomes the conversation history for the next turn. Everything is written to one CSV per session.
 
-## Setup
+> **Fork note.** This repo is forked from [SALT-NLP/SparkMe](https://github.com/SALT-NLP/SparkMe), a multi-agent interview system. Most of that machinery (session scribe, strategic planner, report team, memory/question banks) is still in the tree but **dormant**: it is constructed and never used. The upstream README is kept at [`docs/UPSTREAM_SPARKME.md`](docs/UPSTREAM_SPARKME.md). See [`src/README.md`](src/README.md) for which code is live and which is not.
 
-### Environment Variables
+---
 
-Create a `.env` file in the project root. Copy `.env_sample` and fill in the values:
+## Quick start
 
 ```bash
-cp .env_sample .env
+# Python 3.11+ (pandas 3 / numpy 2.4)
+pip install -r requirements.txt   # pinned from the working study environment
+cp .env_sample .env                  # then fill in the keys, MODEL_NAME_1..6, DATA_DIR, LOGS_DIR
+
+python -m src.main_flask --port 5000 # run from the repo root (imports use the `src.` prefix)
 ```
 
-At minimum, set your model API key (e.g., `OPENAI_API_KEY`) and review the model/directory settings.
+Open `http://<host>:5000/login`. The health check is at `/health`.
 
-### Python Dependencies
+**Run exactly one process.** Live sessions are held in memory (`active_sessions` in `main_flask.py`). With several gunicorn workers, a participant's requests land on workers that don't know their session. If you ever put it behind gunicorn, use `-w 1` with multiple threads.
 
-Recommended Python version: 3.10.12 or above
+---
 
-```bash
-pip install -r requirements.txt
+## Running a study: the operator workflow
+
+| # | Step | How |
+|---|------|-----|
+| 1 | **Generate session lists** for each annotator from PALM | `scripts/generate_user_sessions_file.py` (see [`scripts/README.md`](scripts/README.md)) |
+| 2 | **Annotator registers** at `/register`: username, password, country | Writes `DATA_DIR/users.json` and creates their folders |
+| 3 | **Assign sessions**: copy a generated batch file to `DATA_DIR/<country_slug>/<user_id>/user_sessions.json` | Manual. `user_id` is the key in `users.json`. For later batches, append the new entries and keep the existing ones: `completed` flags live in this file |
+| 4 | **Annotator works**: survey, then session list, then chat | See the flow below |
+| 5 | **Collect data** from `LOGS_DIR/<country_slug>/<user_id>/ratings/*.csv` | One CSV per assigned session |
+| 6 | **Clean up** when needed | `scripts/delete_users.py` (dry run unless `--apply`), `scripts/dedup_ratings_csv.py` (**writes** unless `--dry-run`) |
+
+### What the annotator sees
+
+1. **`/login`** or **`/register`**.
+2. **`/survey`**: demographic survey. Required once before anything else. Saved to `survey.json`.
+3. **`/`**: session list, loaded from `user_sessions.json`. Each item shows the topic, turn count, and the suggested first prompt.
+4. **`/chat`**: the annotation loop:
+   - The annotator writes the first message (the suggested PALM prompt is only a hint).
+   - Up to 4 candidate replies appear, shuffled and anonymised.
+   - The annotator picks one and rates it on **MSA Fluency**, **Cultural Appropriateness**, and **Contextual Relevance** (1–5 each). They can cancel and pick another before submitting.
+   - They reply again. After `n_turns` user messages, one final set of candidates is generated. Rating it completes the session.
+   - Refreshing or reconnecting is safe. History is rebuilt from the CSV, and the interviewer is re-triggered if it still owes a reply.
+
+---
+
+## How one turn works
+
+```mermaid
+sequenceDiagram
+    participant B as Browser (chat.html)
+    participant F as Flask (main_flask.py)
+    participant S as InterviewSession (per-session event loop)
+    participant I as Interviewer
+    participant L as LLMs (MODEL_NAME_1..6)
+
+    B->>F: POST /api/send-message
+    F->>S: user.add_user_message()
+    S->>S: write user row to ratings CSV
+    S->>I: on_message()
+    I->>I: build prompt from ratings CSV (last MAX_EVENTS_LEN turns)
+    I->>L: 4 parallel calls (models 1, 2 + 2 random from 3..6)
+    L-->>I: candidate replies
+    I->>S: present_as_options() → message buffer
+    B->>F: GET /api/get-messages (polls every 1.5 s)
+    F-->>B: candidates
+    B->>F: POST /api/submit-rating (picked + rejected + 3 scores)
+    F->>F: write interviewer row to ratings CSV
+    B->>F: POST /api/acknowledge-messages (clear buffer)
 ```
-## Interview Topics
 
-Interview topic configurations are in `data/configs/`. The file `data/configs/topics.json` defines the interview plan with 10 main topics and 48 subtopics covering **"Understanding the impact of AI in the workforce"** adapted from WorkBank, including areas such as background, core responsibilities, task proficiency, tech learning comfort, AI tool adoption, trust and control, and future outlook.
+The **ratings CSV is the single source of truth**. The interviewer's prompt, the resume-after-refresh logic, and completion detection all read from it. Rejected candidates never enter the conversation history.
 
-## Our System
+---
 
-The implementation for our system can be found in `src` folder.
+## Data layout
 
-### Terminal Mode
+`DATA_DIR` and `LOGS_DIR` come from `.env`. In production they are `data/data` and `data/logs`.
 
-Run an interview session from the terminal:
+```
+DATA_DIR/
+├── users.json                         # registry: user_id → {username, password (SHA-256), country, created_at}
+└── <country_slug>/<user_id>/
+    ├── user_sessions.json             # assigned sessions (you create this, step 3)
+    └── survey.json                    # demographic survey answers
 
-```bash
-python src/main.py --user_id <user_id>
+LOGS_DIR/<country_slug>/<user_id>/
+├── ratings/<session_id>_<country>_<topic>_<n_turns>.csv   # ← the study data
+├── execution_logs/session_1/*.log     # debug logs (see gotcha below)
+└── statistics/session_1/*.json        # token usage
 ```
 
-**Arguments:**
+**Ratings CSV columns** (one row per turn, strictly alternating user and interviewer):
 
-| Flag | Description |
+| Column | Meaning |
 |---|---|
-| `--user_id` | (Required) User identifier for the session |
-| `--user_agent` | Use an LLM agent as the interviewee instead of terminal input |
-| `--voice_input` | Enable speech-to-text for user input |
-| `--voice_output` | Enable text-to-speech for interviewer responses |
-| `--restart` | Clear previous session data for this user and start fresh |
-| `--max_turns N` | Maximum number of conversation turns |
-| `--additional_context_path` | Path to a file with additional context for the interview |
+| `timestamp` | Row write time. For interviewer rows, this is when the rating was *submitted*, not when the reply was generated |
+| `message_id` | ID of the picked candidate (`<uuid>\|<index>`), or a fresh UUID for user rows |
+| `liked_response` | User text (user rows) or the picked candidate (interviewer rows) |
+| `rating_cultural`, `rating_fluency`, `rating_contextual` | 1–5. Empty on user rows |
+| `rejected_options` | Texts of the candidates not picked |
+| `follow_up` | Always empty (feature removed) |
+| `topic`, `country` | From the assignment |
+| `liked_model` | `user` for user rows, otherwise the model that produced the picked reply |
+| `rejected_options_models`, `rejected_option_message_ids` | Models and IDs of the rejected candidates |
 
-**Examples:**
+The CSV is written with `quoting=QUOTE_ALL, escapechar='\\'`. Read it with the same `escapechar`, or backslashes come back doubled.
 
-```bash
-# Interactive terminal interview
-python src/main.py --user_id user001
+---
 
-# Automated with LLM user agent, capped at 50 turns
-python src/main.py --user_id user001 --user_agent --max_turns 50
+## Configuration (`.env`)
 
-# With voice features
-python src/main.py --user_id user001 --voice_input --voice_output
-```
+Only these matter for the web study. `.env_sample` lists everything.
 
-### Web Mode (with GCP)
-
-Helpful commands for your GCP setup:
-
-```bash
-# Setup key for your project (setup FLASK_SCRET_KEY and OPENAI_API_KEY)
-gcloud services enable secretmanager.googleapis.com
-gcloud secrets create flask-secret-key --replication-policy="automatic"
-echo -n "YOUR_KEY" | gcloud secrets versions add flask-secret-key --data-file=-
-
-# Setup for your project
-gcloud projects describe <project name> --format='value(projectNumber)' # This to get project number
-gcloud projects add-iam-policy-binding <project name> \
-    --member="serviceAccount:PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
-    --role="roles/secretmanager.secretAccessor"
-```
-
-Then, you can checkout `scripts/web_interview` for deployment scripts!
-
-The web interface provides:
-- User authentication (register/login)
-- Session creation and management
-- Text and voice message support
-- Real-time conversation history
-- Session timeout handling (default 1 hour)
-
-## Customization
-
-To adapt the system for a different interview domain, three components can be modified:
-
-### Interview Topics
-
-Edit `data/configs/topics.json`. The file is a JSON array where each element has a `"topic"` (main category) and `"subtopics"` (list of specific areas to cover):
-
-```json
-[
-    {
-        "topic": "Your Topic Name",
-        "subtopics": [
-            "First area to explore",
-            "Second area to explore"
-        ]
-    }
-]
-```
-
-Replace the topics and subtopics to match your interview domain. The `INTERVIEW_PLAN_PATH` in `.env` points to this file.
-
-### User Portrait
-
-Edit `data/configs/user_portrait.json`. This is a template with empty fields that gets populated during the interview as the system learns about the interviewee. Modify the field names and structure to match the information you want to capture:
-
-```json
-{
-    "Occupation": "",
-    "Education/Background": "",
-    "Work Context": "",
-    "Your Custom Field": "",
-    "Your Custom List Field": []
-}
-```
-
-The `USER_PORTRAIT_PATH` in `.env` points to this file.
-
-### Agent Prompts
-
-Each agent has a `prompts.py` file in `src/agents/` containing its prompt templates. Modify these to change agent behavior for your domain:
-
-| File | Controls |
+| Variable | Purpose |
 |---|---|
-| `src/agents/interviewer/prompts.py` | Interviewer persona, interview flow instructions, STAR framework usage |
-| `src/agents/session_scribe/prompts.py` | Note-taking strategy, subtopic coverage evaluation, emergent insight detection |
-| `src/agents/strategic_planner/prompts.py` | Question prioritization, rollout strategies, utility function weights |
-| `src/agents/user/prompts.py` | Simulated interviewee behavior (only relevant when using `--user_agent`) |
+| `MODEL_NAME_1`, `MODEL_NAME_2` | Models shown on **every** turn |
+| `MODEL_NAME_3` … `MODEL_NAME_6` | Rotating pool. 2 are picked at random each turn. The pool stops at the first unset slot |
+| Model name prefixes | `openrouter:`, `fanar:`, `jais:`, `gemini-api:`, `vllm:`, `openai-next:`, or a plain OpenAI name. See `src/utils/llm/engines.py` |
+| `OPENROUTER_API_KEY`, `FANAR_API_KEY`, `GEMINI_API_KEY`, … | Credentials for the providers you use |
+| `MODEL_NAME` (+ that provider's key, e.g. `OPENAI_API_KEY`) | Still needed. Dormant agents build a default engine from it at startup, even though it is never called |
+| `EMBEDDING_BACKEND` | `openai` by default. Nothing in the web flow reads embeddings, so `noop` avoids needing an OpenAI key for them |
+| `FLASK_SECRET_KEY` | **Set this.** Without it a random key is generated on each start, which logs everyone out on restart |
+| `DATA_DIR`, `LOGS_DIR` | Storage roots (see above) |
+| `ENGINE_TIMEOUT_SECONDS` (20), `ENGINE_MAX_ATTEMPTS` (3), `INTERVIEWER_MAX_TOKENS` (3000), `ENGINE_MAX_WORKERS` (16) | Per-call timeout, retries, output cap, and LLM thread-pool size |
+| `MAX_EVENTS_LEN` | How many past turns go into the prompt |
+| `SESSION_TIMEOUT_MINUTES` | Inactivity after which a live session stops (its loop exits). The annotator can reopen it, and it resumes from the CSV |
 
-## Baselines
+---
 
-Four baseline interviewer systems are provided in `baselines/`. Each takes a topic spec JSON and runs a turn-by-turn interview, supporting both human input (`--input-mode user`) and simulated LLM interviewees (`--input-mode llm`).
+## Known issues and gotchas
 
-### InterviewGPT
+These are open on `main` as of this writing, ordered roughly by impact.
 
-**`baselines/interviewgpt/interviewgpt.py`**
+- **Committed credentials**: `src/utils/llm/models/openai_next.py` and `jais.py` contain API keys in source. Rotate them and move them to `.env`.
+- **Passwords use unsalted SHA-256** (`hash_password` in `main_flask.py`).
+- **Process-wide state**: `SessionLogger._current_logger` and `BaseAgent.token_tracker` / `current_turn` are class variables. They point to whichever session was created last, so with concurrent participants, *execution logs and token statistics* can be filed under the wrong user. Ratings CSVs are **not** affected: they use explicit `user_id` and `country`.
+- **Internal `session_id` is always 1** in web mode, because the session agenda is never saved. All of a user's sessions share `execution_logs/session_1/` and `statistics/session_1/`. The real per-assignment key is `sel_session_id`, the `session_id` in `user_sessions.json`.
+- **Rating columns were transposed before commit `c4d110d` (2026-08-16).** Older CSVs have cultural and fluency swapped. They need a one-off migration before analysis.
+- **Saudi Arabia naming mismatch**: registration stores `KSA`, but PALM session files use `Saudi Arabia`. A Saudi annotator's files are split between `…/ksa/<user_id>/` (survey, sessions, logs) and `…/saudi_arabia/<user_id>/ratings/`. `Libya` can be registered but has no sessions in the generator.
+- **Committed account**: `data/data/users.json` in the repo holds one account entry. With `DATA_DIR=data/data`, that entry is a working login. Remove it before a fresh deployment.
+- **World-writable files**: the code runs `chmod 777` on user folders and CSVs.
+- **Memory**: each live session owns a thread and an event loop. They are evicted by `cleanup_old_sessions()` every 5 minutes (idle > 30 min, or finished > 10 min).
 
-A single-agent interviewer. One LLM call per turn handles both sufficiency judgment (whether the current subtopic has been adequately covered) and next question generation. Tracks condensed notes per subtopic from user responses. Logs each turn as JSONL.
+---
 
-```bash
-python baselines/interviewgpt/interviewgpt.py \
-  --spec data/configs/topics.json \
-  --input-mode user \
-  --max-turns 72 \
-  --log logs/interviewgpt.jsonl
-```
+## Repository map
 
-### LLMRoleplay
+| Path | Status | What it is |
+|---|---|---|
+| `src/main_flask.py` | **Live** | Web app: auth, survey, session list, chat API, cleanup |
+| `src/interview_session/` | **Live** | Per-session state, turn counting, farewell, CSV writes |
+| `src/agents/interviewer/interviewer.py` | **Live** | Generates the 4 candidates per turn |
+| `src/utils/` (`data_process`, `user_paths`, `llm/`, `logger/`, `token_tracker`) | **Live** | CSV I/O, paths, LLM engines, logging |
+| `src/web/` | **Live** | Templates + CSS (`index`, `text_chat`, `speech_chat` templates are unused) |
+| `scripts/` | **Live** (mostly) | Operator scripts. See [`scripts/README.md`](scripts/README.md) |
+| `src/agents/{session_scribe,strategic_planner,report_team,user}`, `src/content/` | Dormant | Upstream SparkMe agents. Constructed or imported, but never run |
+| `src/main.py` | Deprecated | Upstream terminal mode. Untested with the current interviewer |
+| `baselines/`, `evaluation/`, `dataset_gen/`, `scripts/annotations/`, `scripts/web_interview/` | Upstream only | SparkMe paper code and deploy scripts. Not used by this study |
+| `data/data/` | Mixed | `topics.csv` and `regions.csv` are read at every session start (resolved relative to the repo, not `DATA_DIR`). `follow-ups*.csv` is unused. `users.json` is a committed sample |
+| `data/configs/`, `data/sample_user_profiles/`, `data/workbank_seed/` | Upstream only | WorkBank interview configs and personas |
 
-**`baselines/llmroleplay/llmroleplay.py`**
-
-A single-agent system consisting of interviewer that is provided with an agenda and goes through each part of the agenda one at a time, in a particular fixed order. The agent can decide to reask for at most n times before moving on to the next subtopic.
-
-```bash
-python baselines/llmroleplay/llmroleplay.py \
-  --spec data/configs/topics.json \
-  --input-mode user \
-  --max-turns 72 \
-  --supervisor-frequency 2
-```
-
-### MimiTalk
-
-**`baselines/mimitalk/mimitalk.py`**
-
-An async dual-agent interviewer (interviewer + supervisor), where supervisor monitors the interviewer.
-
-```bash
-python baselines/mimitalk/mimitalk.py \
-  --spec data/configs/topics.json \
-  --input-mode user \
-  --max-turns 72
-```
-
-### StorySage
-
-**`baselines/storysage/`**
-
-A multi-agent system with multiple specialized components: an interviewer agent, a session scribe for note-taking, a strategic planner, a section writer, and a session coordinator. Uses vector databases (FAISS) for question banks and session memories, enabling semantic retrieval during interviews. The most architecturally complex baseline.
-
-```bash
-cd baselines/storysage
-python main.py --user_id <id> --max_turns 80
-```
-
-## UserAgent Profile Generation
-
-You can generate the user agent personas through `dataset_gen/generate_persona_facts.py` to generate initial persona facts for each subtopic based on the WorkBank worker seed, followed by `dataset_gen/generate_bio_notes.py` to generate the profile to be fed to the user agent.
-
-## Evaluation
-
-Evaluation scripts are in `evaluation/`. They assess interview quality from different angles. All support `--mode` to specify which system's logs to evaluate (`sparkme`, `storysage`, `llmroleplay`, or `freeform`). Here `freeform` corresponds to either `MimiTalk` or `InterviewGPT`
-
-### Coverage (`eval_coverage.py`)
-
-Measures how well interview notes capture ground truth facts on a 1-5 scale (5 = all facts found explicitly, 1 = no relevant facts found). Evaluates at configurable snapshot intervals across the interview.
-
-```bash
-python evaluation/eval_coverage.py \
-  --mode sparkme \
-  --base-path <path-to-logs> \
-  --ground-truth-path <path-to-ground-truth> \
-  --num-users 200 \
-  --snapshot-start 1 --snapshot-end 80 --snapshot-step 1
-```
-
-### Emergence (`eval_emergence.py`)
-
-Detects emergent subtopics that arise during the interview beyond the original topic plan. An emergent subtopic must be genuinely new, fall within existing topics, and enable qualitatively new questions.
-
-### Emergence Coverage (`eval_emergence_coverage.py`)
-
-Evaluates the coverage of the emergent subtopics.
-
-### Flow Quality (`eval_flow.py`)
-
-Evaluates interview quality on three dimensions (each scored 1-5):
-
-- **Coherence**: Whether consecutive questions are logically connected
-- **Transition**: Smoothness of topic-to-topic transitions
-- **Contingency**: Whether follow-up questions are grounded in the interviewee's prior responses
-
-### Coverage Calculation (`calculate_coverage.py`)
-
-Computes cumulative coverage metrics from evaluation results.
-
-## Citation
-
-If you found our work helpful, please cite our work using the following citation (will be updated soon)!
-
-```bibtex
-@article{anugraha2026sparkme,
-  title={SparkMe: Adaptive Semi-Structured Interviewing for Qualitative Insight Discovery},
-  author={Anugraha, David and Padmakumar, Vishakh and Yang, Diyi},
-  journal={arXiv preprint arXiv:XXXX.XXXXX},
-  year={2026}
-}
-```
-
-If you have any questions, you can open a [GitHub Issue](https://github.com/SALT-NLP/SparkMe/issues) or contact [David Anugraha](david.anugraha@gmail.com)!
+Full per-file detail is in [`src/README.md`](src/README.md).

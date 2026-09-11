@@ -1,4 +1,7 @@
 """
+DORMANT in the web study -- imported by InterviewSession, but its construction
+is commented out (self.strategic_planner = None).
+
 Strategic Planner Agent for Long-Term Interview Planning
 
 This agent runs every X conversation turns to provide strategic guidance

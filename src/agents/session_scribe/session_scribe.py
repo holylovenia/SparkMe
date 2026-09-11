@@ -1,3 +1,11 @@
+"""
+DORMANT in the web study -- upstream SparkMe note-taking agent.
+
+InterviewSession still constructs it (run() reads processing_in_progress and
+the report check calls get_session_memories), but it is NOT subscribed to
+messages and augment_session_agenda() returns immediately, so none of its
+LLM work runs. See the comment at InterviewSession._subscriptions.
+"""
 from typing import List, TYPE_CHECKING, TypedDict, Optional
 import asyncio
 import time

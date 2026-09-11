@@ -1,3 +1,8 @@
+"""
+DEPRECATED for the web study -- voice input is disabled. Reached only by
+terminal mode and the deprecated /process_audio route. create_stt_engine()
+still runs at session start (via User.__init__) and returns None without PyAudio.
+"""
 from abc import ABC, abstractmethod
 import os
 import wave

@@ -1,3 +1,14 @@
+"""
+Ratings CSV I/O -- this is where the study data is written.
+
+save_rating_to_csv() appends one row per turn to
+    LOGS_DIR/<country>/<user_id>/ratings/<sel_session_id>_<country>_<topic>_<n_turns>.csv
+(user rows have liked_model='user'; interviewer rows carry the 3 ratings and
+the rejected candidates). Column meanings are documented in the root README.
+
+Dialect: csv.QUOTE_ALL with escapechar='\\'. Every reader must pass the same
+escapechar or backslashes come back doubled.
+"""
 import ast
 import csv
 import threading
@@ -42,7 +53,11 @@ def save_rating_to_csv(session_token: str, message_id: str, reply_to: str,
                        liked_model: str = None, rejected_models: list = None,
                        rejected_message_ids: list = None,
                        n_turns: int = None, sel_session_id: str = None):
-    """Record a single turn (user or model) to the per-assigned-session CSV."""
+    """Record a single turn (user or model) to the per-assigned-session CSV.
+
+    `reply_to` is the text stored in `liked_response` (the user's message, or
+    the candidate the user picked). Skips the write if it repeats the previous
+    row's text (duplicate delivery guard)."""
 
     ratings_dir = os.path.join(user_logs_dir(user_id, country=country), 'ratings')
     os.makedirs(ratings_dir, exist_ok=True)
@@ -114,7 +129,7 @@ def _append_rating_row(ratings_file, message_id, reply_to,
 def save_feedback_to_csv(interviewer_message, feedback_message, user_id: str, session_id: str,
                          sel_session_id: str = None, country: str = None,
                          topic: str = None, n_turns: int = None):
-    """Save feedback message to a CSV file with the last conversation message"""
+    """DEPRECATED: no callers (the follow-up/feedback feature was removed)."""
 
     feedback_dir = os.path.join(user_logs_dir(user_id, country=country), 'feedback')
     os.makedirs(feedback_dir, exist_ok=True)
@@ -164,6 +179,7 @@ def save_feedback_to_csv(interviewer_message, feedback_message, user_id: str, se
         ])
         
 def read_from_pdf(file_path: str):
+    """Only used by commented-out code in SessionScribe.augment_session_agenda."""
     from PyPDF2 import PdfReader
 
     reader = PdfReader(file_path)

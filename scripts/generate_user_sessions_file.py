@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-generate_palm_sessions.py
+generate_user_sessions_file.py
 
 Build reproducible, topic-balanced PALM-sourced session lists for SparkMe.
 
@@ -8,7 +8,7 @@ Pipeline
 --------
 1. Load UBC-NLP/palm (train + test) from Hugging Face.
 2. Shuffle deterministically with SEED.
-3. Filter to non-MSA + open-ended + the 12 target topics + the 11 target countries.
+3. Filter to non-MSA + open-ended + the 12 target topics + the 12 target countries.
 4. For every (country, topic) pair, build a shard-accessor that hands back
    SHARD_SIZE (13) instances per shard, cycling back through the same pool
    (re-using earlier instances) once the real data for that topic runs out.
@@ -36,13 +36,23 @@ PALM is a gated dataset. Before running this script:
     1. Accept the terms at https://huggingface.co/datasets/UBC-NLP/palm
     2. Run `huggingface-cli login` (or set the HF_TOKEN env var)
 
-Usage
+Usage (from the repo root)
 -----
-    python generate_palm_sessions.py --country "UAE" --annotator-id 8 \
-        --out sessions_uae_8.json
+    mkdir -p out
+    python scripts/generate_user_sessions_file.py --country "UAE" --annotator_id 8 \
+        --batch_sizes "[32, 32, -1]" --out_dir out
+    # -> out/sessions_UAE_annotator8_batch{0,1,2}.json
+    # Nothing is written unless --out_dir is given (it must already exist).
 
     # Just inspect how much data is available per (country, topic):
-    python generate_palm_sessions.py --report
+    python scripts/generate_user_sessions_file.py --report
+
+Next step: copy a batch file to
+    DATA_DIR/<country_slug>/<user_id>/user_sessions.json
+(append later batches to it; do not overwrite -- `completed` flags live there).
+See scripts/README.md.
+
+Note: COUNTRIES uses "Saudi Arabia" while the registration form uses "KSA".
 """
 
 from __future__ import annotations

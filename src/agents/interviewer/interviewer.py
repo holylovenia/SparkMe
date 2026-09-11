@@ -1,3 +1,17 @@
+"""
+Interviewer: produces the candidate replies the annotator chooses between.
+
+Per user turn (_generate_turn):
+  1. Build the prompt from the ratings CSV (get_event_stream_str_from_csv):
+     only liked/picked turns, last MAX_EVENTS_LEN of them, reply in MSA.
+  2. Call up to 4 models in parallel: MODEL_NAME_1, MODEL_NAME_2, plus 2 drawn
+     at random from MODEL_NAME_3..6. Each call is bounded by
+     ENGINE_TIMEOUT_SECONDS; failed models are simply dropped.
+  3. Shuffle the survivors and hand them to InterviewSession.present_as_options.
+
+The upstream SparkMe prompt (prompts.py), tools (recall / respond_to_user)
+and strategic-question helpers are not used by this flow.
+"""
 import asyncio
 import csv
 import os
@@ -66,6 +80,8 @@ class Interviewer(BaseAgent, Participant):
         self.config = config
 
         self.interview_description = config.get("interview_description")
+        # DORMANT: the live prompt asks for plain text, so these tools are
+        # never invoked. They are kept because constructing them is harmless.
         self.tools = {
             "recall": Recall(memory_bank=self.interview_session.memory_bank),
             "respond_to_user": RespondToUser(
@@ -94,6 +110,10 @@ class Interviewer(BaseAgent, Participant):
         self._max_consideration_iterations = 4
 
     def _get_from_random_model_pool(self, start_index=3, last_index=6, n_return=2):
+            """Pick `n_return` random models from MODEL_NAME_<start>..<last>.
+
+            The pool stops at the first unset slot. Short pools are padded with
+            `lipsum:` placeholders, which _generate_turn filters out."""
             model_pool = []
             for i in range(start_index, last_index + 1):
                 model_i = os.getenv(f"MODEL_NAME_{i}", f"lipsum:model-{i}")
@@ -112,6 +132,7 @@ class Interviewer(BaseAgent, Participant):
 
     def _handle_quantify_response(self, quantified_response: str,
                                   original_response: str) -> Tuple[str, Rubric]:
+        """DEPRECATED: question quantification is disabled (see _handle_response)."""
         # 2. Parse the <tool_calls> block from the response
         final_question_text = original_response
         final_rubric = None
@@ -150,7 +171,10 @@ class Interviewer(BaseAgent, Participant):
         return final_question_text, final_rubric
 
     async def _handle_response(self, response: str, subtopic_id: str = "") -> str:
-        """Handle responses from the RespondToUser tool by quantifying it and adding them to chat history.
+        """Add a single reply to chat history.
+
+        Only used as the fallback when present_as_options() fails; the normal
+        path records the picked candidate via /api/submit-rating instead.
         
         Args:
             response: The response text to add to chat history
@@ -180,6 +204,8 @@ class Interviewer(BaseAgent, Participant):
         return quantified_question
 
     async def on_message(self, message: Message):
+        """Generate one turn. `message=None` is used to force a turn (resume,
+        farewell). `_turn_to_respond` is True while generation is in flight."""
         if message:
             SessionLogger.log_to_file(
                 "execution_log",
@@ -197,6 +223,7 @@ class Interviewer(BaseAgent, Participant):
             self._turn_to_respond = False
 
     async def _generate_turn(self):
+        """Call the model pool in parallel and present the replies as options."""
         prompt = self._get_prompt()
         self.add_event(sender=self.name, tag="llm_prompt", content=prompt)
 
@@ -327,7 +354,8 @@ class Interviewer(BaseAgent, Participant):
         return "\n".join(events)
 
     def _get_prompt(self):
-    # Gets the prompt for the interviewer — chat history only.
+        """The live interviewer prompt: instruction + recent CSV history +
+        'answer in Standard Arabic'. Edit here to change model behaviour."""
 
         topic   = getattr(self.interview_session, 'topic',   'the chosen topic')
         country = getattr(self.interview_session, 'country', 'the chosen country')

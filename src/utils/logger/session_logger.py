@@ -28,6 +28,13 @@ LOG_LEVELS = {
 }
 
 class SessionLogger:
+    """Per-session file logs under LOGS_DIR/<country>/<user_id>/execution_logs/session_<id>/.
+
+    KNOWN ISSUE: `_current_logger` is a class variable, so log_to_file() writes
+    to the folder of the most recently created session in the process. With
+    concurrent participants, logs can be filed under the wrong user. FileHandlers
+    are also never closed (one per user x file, kept for the process lifetime).
+    """
     _file_locks = {}
     _locks_lock = threading.Lock()
     _current_logger = None

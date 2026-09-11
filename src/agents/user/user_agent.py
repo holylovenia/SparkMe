@@ -1,3 +1,8 @@
+"""
+DORMANT in the web study -- LLM-simulated interviewee.
+
+Only used by src/main.py --user_agent (interaction_mode='agent').
+"""
 import asyncio
 import os
 import re

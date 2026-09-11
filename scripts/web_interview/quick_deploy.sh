@@ -1,4 +1,7 @@
 #!/bin/bash
+# UPSTREAM / NOT USED BY THE ARABIC STUDY. Stale: does not pass MODEL_NAME_1..6
+# or OpenRouter/Fanar keys, and the bucket mount at /app/data would hide
+# data/data/*.csv. See scripts/README.md.
 
 # =============================================================================
 # Quick Deploy Script for GCP Cloud Run for Interview with Persistent Storage

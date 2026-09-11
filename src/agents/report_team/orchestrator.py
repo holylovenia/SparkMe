@@ -1,3 +1,9 @@
+"""
+DORMANT in the web study -- upstream SparkMe report writer.
+
+Constructed by InterviewSession but never invoked (the report update and
+final_update_report_and_agenda callers are commented out).
+"""
 import os
 from typing import Dict, List, TYPE_CHECKING, Optional
 import asyncio

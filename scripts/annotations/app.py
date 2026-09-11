@@ -1,3 +1,10 @@
+"""
+UPSTREAM / NOT USED BY THE ARABIC STUDY.
+
+Separate annotation app from the SparkMe paper (coverage + emergence rubrics
+over session-agenda snapshots in INTERVIEW_DATA_ROOT/final_logs/). The web
+study never writes those snapshots. Kept for reference; see scripts/README.md.
+"""
 from flask import Flask, render_template, request, session, redirect, url_for, flash
 import json
 import hashlib

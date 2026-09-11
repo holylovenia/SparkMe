@@ -1,3 +1,7 @@
+"""
+DORMANT in the web study -- set up per session, but nothing logs to it
+in web mode (its only live caller is the dormant final report update).
+"""
 from pathlib import Path
 import csv
 import os

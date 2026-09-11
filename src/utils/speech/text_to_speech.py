@@ -1,3 +1,7 @@
+"""
+DEPRECATED for the web study -- voice output is disabled. Reached only by
+terminal mode and the deprecated /process_audio route.
+"""
 from abc import ABC, abstractmethod
 from typing import Optional
 import os

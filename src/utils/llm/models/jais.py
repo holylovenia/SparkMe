@@ -1,3 +1,9 @@
+"""
+Engine for JAIS 2 (model names prefixed `jais:` or `Jais-2-70B-Chat`).
+
+SECURITY: the default JAIS2_API_KEY below is committed to the repo. Supply
+it via .env instead.
+"""
 import os
 from langchain_openai import ChatOpenAI
 from src.utils.llm.models.data import ModelResponse

@@ -32,7 +32,9 @@ _ENGINE_EXECUTOR = ThreadPoolExecutor(
 class BaseAgent:
     """Base class for all agents. All agents inherits from this class."""
 
-    # Class variable shared by all instances
+    # Class variables shared by all instances IN THE WHOLE PROCESS. Every new
+    # InterviewSession overwrites them, so with concurrent participants token
+    # usage is recorded against whichever session was created last.
     use_baseline: bool = False
     # Shared token tracker across all agents (set by InterviewSession)
     token_tracker = None
@@ -51,7 +53,9 @@ class BaseAgent:
         self.description = description
         self.config = config
 
-        # Initialize the LLM engine
+        # Default engine from MODEL_NAME. Built for every agent (including the
+        # dormant ones), so MODEL_NAME and its API key must be valid at startup
+        # even though the Interviewer uses its own MODEL_NAME_1..6 engines.
         self.engine = get_engine(model_name= \
                                  config.get("model_name",
                                             os.getenv("MODEL_NAME", "gpt-4.1-mini")),

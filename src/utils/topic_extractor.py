@@ -1,3 +1,6 @@
+"""
+DEPRECATED -- not imported anywhere in src/.
+"""
 import os
 import json
 import argparse

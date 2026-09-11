@@ -1,3 +1,7 @@
+"""
+DORMANT -- upstream SparkMe interviewer prompts. The live prompt is built
+inline in Interviewer._get_prompt().
+"""
 from src.utils.llm.prompt_utils import format_prompt
 
 def get_prompt(prompt_type: str = "normal"):

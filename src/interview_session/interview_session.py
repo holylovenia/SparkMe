@@ -1,3 +1,26 @@
+"""
+InterviewSession: state and turn-taking for one assigned chat session.
+
+Web mode ('api') is the only mode the study uses. What actually runs there:
+    __init__                       builds participants + agents, loads banks (see below)
+    run()                          waits; stops the session after SESSION_TIMEOUT_MINUTES idle
+    add_message_to_chat_history()  user turn -> ratings CSV -> notify Interviewer
+    present_as_options()           interviewer candidates -> UserDummyParticipant buffer
+    _notify_participants()         counts user turns; triggers the farewell at max_turns
+    trigger_farewell()             makes the in-flight turn the last one, then closes
+
+State flags (read by main_flask.py):
+    session_in_progress   False once the session has stopped (farewell or timeout)
+    _session_ending       farewell has been claimed (prevents a second one)
+    _farewell_done        final candidates have been generated
+    _farewell_rated       user rated the final turn -> assignment complete
+    _user_message_count   user turns so far (restored from the CSV on resume)
+
+Dormant upstream pieces still constructed in __init__: SessionScribe (not
+subscribed), ReportOrchestrator (never invoked), VectorMemoryBank /
+QuestionBankVectorDB (loaded, never read), SessionAgenda (only used to derive
+`session_id`, which is always 1 in web mode because the agenda is never saved).
+"""
 import asyncio
 import os
 import uuid
@@ -33,6 +56,12 @@ from src.utils.token_tracker import TokenUsageTracker
 from dotenv import load_dotenv
 load_dotenv()
 
+# <repo>/data/data -- static study CSVs (topics.csv, regions.csv) bundled with the code.
+_REPO_DATA_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "data", "data",
+)
+
 
 class UserConfig(TypedDict, total=False):
     """Configuration for user settings.
@@ -58,6 +87,13 @@ class BankConfig(TypedDict, total=False):
 
 
 class InterviewSession:
+    """One chat session. In web mode, one instance per assigned session,
+    created by main_flask.create_interview_session() on its own event loop.
+
+    Two IDs: `sel_session_id` is the assignment id from user_sessions.json and
+    names the ratings CSV; `session_id` is an internal counter used only for
+    log folders.
+    """
 
     def __init__(self, interaction_mode: str = 'terminal', user_config: UserConfig = {},
                  interview_config: InterviewConfig = {}, bank_config: BankConfig = {},
@@ -82,7 +118,11 @@ class InterviewSession:
                       If None, session continues until manually ended
         """
 
-        # Set the baseline mode for all agents
+        # Set the baseline mode for all agents.
+        # NOTE: BaseAgent.use_baseline / token_tracker (below) and the
+        # SessionLogger set up below are PROCESS-WIDE: the most recently created
+        # session wins, so with concurrent participants execution logs and token
+        # stats can land under the wrong user. Ratings CSVs are unaffected.
         if use_baseline is not None:
             # Set the class variable directly to affect all agent instances
             BaseAgent.use_baseline = use_baseline
@@ -100,6 +140,8 @@ class InterviewSession:
         self._resume_in_flight = False   # guards post-reconnect interviewer trigger
         self._last_resume_check    = 0.0     # cooldown on CSV progress re-reads
         self._resume_candidate_since = None  # confirmation window for the trigger
+        # Only used by the random topic picker for sessions WITHOUT an
+        # assignment (never the case in the study), but loaded unconditionally.
         self._opening_topics = self._get_opening_topics()
         self._countries = self._get_countries()
         self._response_model_map: Dict[str, str] = {}   # message_id → model_name
@@ -227,6 +269,8 @@ class InterviewSession:
             interview_session=self
         )
         
+        # DORMANT: the strategic planner is disabled. Leave as None -- nothing
+        # in the live path reads it.
         self.strategic_planner = None
         # # StrategicPlanner config
         # # TODO: Tune strategic planner parameters
@@ -254,6 +298,7 @@ class InterviewSession:
         #     config=planner_config,
         #     interview_session=self
         # )
+        # DORMANT: constructed but never invoked in web mode.
         self.report_orchestrator = ReportOrchestrator(
             config=ReportConfig(
                 user_id=self.user_id,
@@ -307,7 +352,9 @@ class InterviewSession:
         self.tokenizer = get_encoding("cl100k_base")
 
     async def _notify_participants(self, message: Message):
-        """Notify subscribers asynchronously"""
+        """Deliver a message to its subscribers (User msg -> Interviewer,
+        Interviewer msg -> participant buffer). For user messages, also bumps
+        the turn counter and fires the farewell once max_turns is reached."""
         subscribers = self._subscriptions.get(message.role, [])
 
         tasks = []
@@ -380,10 +427,12 @@ class InterviewSession:
             #         log_level="info"
             #     )
 
-    def _get_opening_topics(self, data_path: str = "/home/holy/projects/SparkMe/data/data/topics.csv") -> list[str]:
+    # Both CSVs ship with the repo under data/data/. Resolved from this file's
+    # location so they are found regardless of the working directory or DATA_DIR.
+    def _get_opening_topics(self, data_path: str = os.path.join(_REPO_DATA_DIR, "topics.csv")) -> list[str]:
         return pd.read_csv(data_path)['topic'].tolist()
 
-    def _get_countries(self, data_path: str = "/home/holy/projects/SparkMe/data/data/regions.csv") -> list[str]:
+    def _get_countries(self, data_path: str = os.path.join(_REPO_DATA_DIR, "regions.csv")) -> list[str]:
         return pd.read_csv(data_path)['country'].tolist()
 
     def _turns_exhausted(self) -> bool:
@@ -406,7 +455,11 @@ class InterviewSession:
                        message_type: str = MessageType.OPTION,
                        metadata: dict = None,
                        model_names: list[str] = None):
-        """Present message as options"""
+        """Queue each candidate reply as a separate Interviewer message.
+
+        IDs are `<uuid>|<index>`; `_response_model_map` remembers which model
+        produced each id so submit_rating() can record liked/rejected models.
+        Delivery is scheduled (create_task), not immediate."""
         # Mutable defaults are shared across every call; bind per-call instead.
         content     = list(content)     if content     else []
         model_names = list(model_names) if model_names else []
@@ -447,6 +500,11 @@ class InterviewSession:
                                 rating_contextual: int = None,
                                 rejected_options: list = None,
                                 topic: str = None, country: str = None):
+        """Append a message and notify subscribers.
+
+        User turns are written to the ratings CSV here. Interviewer turns are
+        NOT -- they are recorded by /api/submit-rating once the user picks one.
+        No-op once the session has stopped."""
         if not self.session_in_progress:
             return
 
@@ -517,6 +575,8 @@ class InterviewSession:
         )
 
     def get_system_guidance(self, message_id: str) -> str | None:
+        """One-time hint shown after the first rating. Assigned sessions start
+        with _first_guidance_given=True, so in the study this returns None."""
         if not self._first_guidance_given:
             self._first_guidance_given = True
             return "Please start the conversation with a prompt related to the topic you chose."
@@ -594,6 +654,13 @@ class InterviewSession:
             SessionLogger.log_to_file("execution_log", "[FAREWELL] Session closed after farewell.")
 
     async def run(self):
+        """Session main loop (scheduled by create_interview_session).
+
+        Assigned sessions just wait for the user to speak first. The loop exits
+        when session_in_progress goes False, or after SESSION_TIMEOUT_MINUTES
+        without a message (the assignment can be reopened and resumes from the
+        CSV). The upstream post-interview report/bank saving is commented out.
+        """
         await self.session_scribe.augment_session_agenda(
             additional_context_path=self._initial_additional_context_path)
 
@@ -702,7 +769,7 @@ class InterviewSession:
         #             "execution_log", f"[COMPLETED] Session completed")
 
     async def get_session_memories(self, include_processed=True) -> List[Memory]:
-        """Get memories added during this session
+        """DORMANT: the scribe never records memories in web mode.
         
         Args:
             include_processed: If True, returns all memories from the session
@@ -715,7 +782,8 @@ class InterviewSession:
         )
 
     async def _check_and_trigger_report_update(self):
-        """Check if we have enough memories to trigger a report update"""
+        """DORMANT: runs every few user turns but is effectively a no-op --
+        the scribe has no memories and the report update call is commented out."""
         # Skip if report update already in progress or session not in progress
         if self.auto_report_update_in_progress or \
            not self.session_in_progress or \
@@ -774,7 +842,7 @@ class InterviewSession:
                 self.auto_report_update_in_progress = False
     
     async def _update_conversation_summary(self):
-        """Generate a summary of recent conversation messages"""
+        """DORMANT: only reachable from _check_and_trigger_report_update."""
         
         # Extract recent messages from chat history
         recent_messages: List[Message] = []
@@ -788,7 +856,7 @@ class InterviewSession:
                 summarize_conversation(recent_messages)
     
     async def final_update_report_and_agenda(self, selected_topics: Optional[List[str]] = None):
-        """Trigger final report update"""
+        """DORMANT: upstream end-of-interview report; its caller in run() is commented out."""
         # Record start time
         start_time = time.time()
         
@@ -815,7 +883,10 @@ class InterviewSession:
             )
 
     def end_session(self):
-        """End the session without triggering report update"""
+        """End the session without triggering report update.
+
+        DEPRECATED: only referenced by the commented-out EndConversation tool.
+        Web sessions end through trigger_farewell()."""
         self.session_in_progress = False
 
         # Save final token usage summary
@@ -828,7 +899,7 @@ class InterviewSession:
             )
 
     def _setup_signal_handlers(self):
-        """Setup signal handlers for graceful shutdown"""
+        """Setup signal handlers for graceful shutdown (agent mode only)."""
         loop = asyncio.get_event_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, self._signal_handler)
@@ -842,9 +913,9 @@ class InterviewSession:
             "execution_log", f"[SIGNAL] Waiting for interview session to finish...")
     
     def set_db_session_id(self, db_session_id: int):
-        """Set the database session ID. Used for server mode"""
+        """DEPRECATED: upstream DB server mode; no callers."""
         self.db_session_id = db_session_id
 
     def get_db_session_id(self) -> int:
-        """Get the database session ID. Used for server mode"""
+        """DEPRECATED: upstream DB server mode; no callers."""
         return self.db_session_id

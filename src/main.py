@@ -1,3 +1,10 @@
+"""
+DEPRECATED for the study -- upstream SparkMe terminal / LLM-user-agent entry point.
+
+Not tested since the Interviewer switched to 4 candidates per turn (a
+terminal user would be prompted once per candidate). The web app entry point
+is src/main_flask.py. See src/README.md.
+"""
 import argparse
 import os
 from dotenv import load_dotenv

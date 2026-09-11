@@ -1,6 +1,28 @@
 """
-Flask Web Application for Interview Session
-Supports both text and voice input/output with authentication
+Flask web app for the Arabic cultural chat-annotation study (entry point).
+
+Run from the repo root:  python -m src.main_flask --port 5000
+
+Page flow:   /register -> /login -> /survey (once) -> / (session list) -> /chat
+Chat loop (all called by web/templates/chat.html):
+    /api/start-session       build or reuse the InterviewSession for one assignment
+    /api/send-message        user turn -> ratings CSV -> Interviewer generates candidates
+    /api/get-messages        polled every 1.5 s; returns candidates, marks completion
+    /api/submit-rating       picked candidate + 3 ratings -> ratings CSV
+    /api/acknowledge-messages  drop rated candidates from the live buffer
+    /api/session-history     rebuild the chat from the CSV after a refresh
+    /api/mark-session-completed  client-side backup of the completion flag
+
+State model:
+    * Assignments live in DATA_DIR/<country>/<user_id>/user_sessions.json.
+    * Live sessions live ONLY in this process (`active_sessions`), each with its
+      own asyncio loop + thread. Run a single worker process.
+    * The ratings CSV is the source of truth for the conversation; a session
+      evicted from memory is rebuilt from it on the next /api/start-session.
+
+Voice routes (/api/send-voice, /api/get-voice-response, /process_audio,
+/get_last_messages) and /api/end-session, /api/session-status,
+/api/debug-session are not used by the live UI -- see src/README.md.
 """
 
 from flask import Flask, request, jsonify, render_template, Response, redirect, url_for, flash
@@ -28,7 +50,7 @@ from src.interview_session.interview_session import InterviewSession
 from src.utils.data_process import save_rating_to_csv
 from src.utils.speech.speech_to_text import create_stt_engine
 from src.utils.speech.text_to_speech import create_tts_engine
-from src.utils.user_paths import get_user_country, user_data_dir, user_logs_dir
+from src.utils.user_paths import get_user_country, user_data_dir, user_logs_dir  # get_user_country: unused
 
 load_dotenv(override=True)
 
@@ -43,11 +65,14 @@ COUNTRIES_ENG_TO_MSA = {
     'Libya': 'ليبيا',
 }
 
-SESSION_TIMEOUT_SECONDS = 1800  # 1 hour
+SESSION_TIMEOUT_SECONDS = 1800  # 30 min: idle live sessions are evicted from memory after this (see cleanup_old_sessions)
 START_TIME = time.time()
 
 class AppConfig:
-    """Application configuration"""
+    """CLI-level settings (filled from parse_arguments() in __main__).
+
+    Note: max_turns / restart / additional_context_path only apply when set on
+    the command line; per-assignment n_turns from user_sessions.json wins."""
     def __init__(self):
         self.default_user_id = "web_user"
         self.host = "0.0.0.0"
@@ -64,12 +89,13 @@ def get_user_sessions_path(user_id: str) -> str:
     """Get path to user's session list JSON"""
     return os.path.join(user_data_dir(user_id), 'user_sessions.json')
 
-# get_user_stats_path
+# DEPRECATED: nothing reads or writes user_stats.json any more.
 def get_user_stats_path(user_id: str) -> str:
     return os.path.join(user_data_dir(user_id), 'user_stats.json')
 
 # get_survey_path
 def get_survey_path(user_id: str) -> str:
+    """DATA_DIR/<country>/<user_id>/survey.json"""
     return os.path.join(user_data_dir(user_id), 'survey.json')
 
 # =============================================================================
@@ -95,6 +121,7 @@ login_manager.login_message = 'Please log in to access the interview.'
 USERS_FILE = os.path.join(os.getenv('DATA_DIR', 'data'), 'users.json')
 
 class User(UserMixin):
+    """Flask-Login user. `id` is the users.json key (random token), not the username."""
     def __init__(self, user_id, username):
         self.id = user_id
         self.username = username
@@ -136,11 +163,17 @@ def save_users(users):
     _atomic_write_json(USERS_FILE, users)
 
 def hash_password(password):
-    """Hash password using SHA-256"""
+    """Hash password using SHA-256.
+
+    KNOWN ISSUE: unsalted. Migrating to a salted KDF (argon2/bcrypt) needs a
+    lazy-upgrade path so existing accounts can still log in."""
     return hashlib.sha256(password.encode()).hexdigest()
 
 def load_user_sessions(user_id: str) -> list:
-    """Load session list for a user"""
+    """Load the user's assigned sessions (user_sessions.json).
+
+    This file is created by the operator from generate_user_sessions_file.py
+    output; the app only ever flips the `completed` flag in it."""
     path = get_user_sessions_path(user_id)
     if not os.path.exists(path):
         return []
@@ -148,6 +181,7 @@ def load_user_sessions(user_id: str) -> list:
         return json.load(f)
 
 def save_user_sessions(user_id: str, sessions: list):
+    """Atomically rewrite user_sessions.json. Call under _user_json_lock."""
     _atomic_write_json(get_user_sessions_path(user_id), sessions)
     os.system(f"chmod 777 {get_user_sessions_path(user_id)}")
 
@@ -206,6 +240,8 @@ if not app.debug:
 
 # =============================================================================
 # ASYNC EVENT LOOP MANAGEMENT
+# DEPRECATED: this global loop is never used -- run_async_task() has no callers.
+# Every InterviewSession gets its own loop in create_interview_session().
 # =============================================================================
 
 loop = asyncio.new_event_loop()
@@ -228,6 +264,7 @@ def run_async_task(coro):
 # ── Survey helpers ────────────────────────────────────────────────────────────
 
 def load_survey(user_id: str) -> dict:
+    """Return the saved survey answers, or {} if not yet submitted."""
     path = get_survey_path(user_id)
     if os.path.exists(path):
         with open(path, 'r', encoding='utf-8') as f:
@@ -243,6 +280,8 @@ def save_survey(user_id: str, data: dict):
     os.system(f"chmod 777 {path}")
 
 def survey_completed(user_id: str) -> bool:
+    """True once every required survey field is present. Gates the / page.
+    Keep `required` in sync with api_save_survey() and survey.html."""
     data     = load_survey(user_id)
     required = [
         'gender', 'age', 'ethnicity', 'education', 'country',
@@ -302,6 +341,13 @@ def api_save_survey():
 # =============================================================================
 
 class SessionWrapper:
+    """One live session held in `active_sessions`, keyed by session_token.
+
+    Besides the fields below, create_interview_session() attaches:
+        sel_session_id, country, topic, n_turns   the assignment it serves
+        loop, loop_thread                         its private asyncio loop
+    and /api/end-session or cleanup may attach `ended_at`.
+    """
     def __init__(self, session_token: str, interview_session: InterviewSession,
                  user_id: str):
         self.session_token = session_token
@@ -310,8 +356,8 @@ class SessionWrapper:
         self.created_at = time.time()
         self.last_activity = time.time()
 
-active_sessions: Dict[str, SessionWrapper] = {}
-last_messages_by_session: Dict[str, Dict[str, str]] = {}
+active_sessions: Dict[str, SessionWrapper] = {}             # session_token -> wrapper (in-memory only)
+last_messages_by_session: Dict[str, Dict[str, str]] = {}    # DEPRECATED: only used by the voice routes
 
 def _read_csv_progress(user_id: str, sel_session_id, session_id,
                        country: str, topic: str, n_turns) -> dict:
@@ -354,7 +400,7 @@ def _read_csv_progress(user_id: str, sel_session_id, session_id,
 
 def _count_completed_user_turns(user_id: str, sel_session_id, session_id,
                                 country: str, topic: str, n_turns) -> int:
-    """Count user-turn rows already written to the ratings CSV."""
+    """DEPRECATED (no callers): use _read_csv_progress() directly."""
     return _read_csv_progress(user_id, sel_session_id, session_id,
                               country, topic, n_turns)['user_turns']
 
@@ -406,6 +452,15 @@ def create_interview_session(user_id: str,
                              country: str = None,
                              topic: str = None,
                              n_turns: int = None) -> tuple[InterviewSession, str]:
+    """Build an InterviewSession for one assignment and start it on its own loop.
+
+    Progress is restored from the ratings CSV, so this is also how a session is
+    resumed after a server restart or eviction. If the CSV shows the assignment
+    already finished, the session is created in the finished state.
+
+    Returns (interview_session, session_token). Callers must hold
+    _start_session_lock (see start_session) to avoid duplicate sessions.
+    """
     session_token = str(uuid.uuid4())
     effective_max_turns = n_turns if n_turns is not None else config.max_turns
 
@@ -494,12 +549,14 @@ def create_interview_session(user_id: str,
     return interview_session, session_token
 
 def get_session(session_token: str) -> Optional[InterviewSession]:
+    """Look up a live session and refresh its idle timer. None if evicted."""
     wrapper = active_sessions.get(session_token)
     if wrapper is not None:
         wrapper.last_activity = time.time()
     return wrapper.interview_session if wrapper is not None else None
 
 def get_session_wrapper(session_token: str) -> Optional[SessionWrapper]:
+    """Same as get_session() but returns the wrapper (for .loop etc.)."""
     wrapper = active_sessions.get(session_token)
     if wrapper is not None:
         wrapper.last_activity = time.time()
@@ -762,6 +819,9 @@ def start_session():
 @app.route('/api/submit-rating', methods=['POST'])
 @login_required
 def submit_rating():
+    """Record the candidate the user picked, its 3 ratings, and the rejected
+    candidates (text, model, ids) as one interviewer row in the ratings CSV.
+    Rating the final (farewell) turn is what completes the session."""
     data                 = request.json
     session_token        = data.get('session_token')
     message_id           = data.get('message_id')
@@ -815,6 +875,12 @@ def submit_rating():
 @app.route('/api/send-message', methods=['POST'])
 @login_required
 def send_message():
+    """Hand the user's message to the session's loop. Returns immediately;
+    the interviewer's candidates arrive later via /api/get-messages.
+
+    The rating_* / rejected_options / topic / country fields in the payload are
+    passed through but not written for user rows -- ratings are recorded by
+    /api/submit-rating."""
     data             = request.json
     session_token    = data.get('session_token')
     user_message     = data.get('message')
@@ -852,7 +918,8 @@ def send_message():
     # drain the buffer via get_and_clear_messages before polling sees it.
     return jsonify({'success': True, 'message': 'Message sent successfully'})
 
-# Stub
+# DEPRECATED stub: voice input is disabled. Only the unused text_chat.html /
+# speech_chat.html templates call this.
 @app.route('/api/send-voice', methods=['POST'])
 @login_required
 def send_voice():
@@ -861,7 +928,11 @@ def send_voice():
 @app.route('/api/get-messages', methods=['GET'])
 @login_required
 def get_messages():
-    """Get new messages from the session (polling endpoint)"""
+    """Polling endpoint (every 1.5 s from chat.html).
+
+    Returns buffered interviewer candidates, runs the self-healing resume check,
+    and is the single place that marks an assignment completed in
+    user_sessions.json (`is_session_done`)."""
     session_token = request.args.get('session_token')
 
     session = get_session(session_token)
@@ -931,7 +1002,8 @@ def get_messages():
 @app.route('/api/acknowledge-messages', methods=['POST'])
 @login_required  # PROTECTED
 def acknowledge_messages():
-    """Mark messages as acknowledged by the client"""
+    """Remove rated candidates (picked + rejected ids) from the live buffer so
+    they are not re-delivered after a refresh."""
     data = request.json
     session_token = data.get('session_token')
     message_ids = data.get('message_ids', [])
@@ -959,7 +1031,7 @@ def acknowledge_messages():
 
     return jsonify({'success': True})
 
-# Stub
+# DEPRECATED stub: voice output is disabled.
 @app.route('/api/get-voice-response', methods=['GET'])
 @login_required
 def get_voice_response():
@@ -968,7 +1040,9 @@ def get_voice_response():
 @app.route('/api/mark-session-completed', methods=['POST'])
 @login_required
 def mark_session_completed():
-    """Mark a user_sessions.json entry as completed"""
+    """Mark a user_sessions.json entry as completed.
+
+    Client-side backup only -- get_messages() already does this server-side."""
     data = request.json
     sel_session_id = data.get('session_id')
     user_id = current_user.id
@@ -1229,7 +1303,9 @@ def session_history():
 @app.route('/api/end-session', methods=['POST'])
 @login_required
 def end_session():
-    """Trigger one final interviewer response then close the session."""
+    """Trigger one final interviewer response then close the session.
+
+    Not called by the live UI (sessions end by turn count). Kept for manual use."""
     data = request.json
     session_token = data.get('session_token')
 
@@ -1256,7 +1332,7 @@ def end_session():
 @app.route('/api/session-status', methods=['GET'])
 @login_required  # PROTECTED
 def session_status():
-    """Get current session status including background task progress"""
+    """Session status for debugging. Not called by the live UI."""
     session_token = request.args.get('session_token')
 
     wrapper = get_session_wrapper(session_token)
@@ -1293,7 +1369,8 @@ def session_status():
 @app.route('/api/debug-session', methods=['GET'])
 @login_required  # PROTECTED
 def debug_session():
-    """Development-only: return session internals"""
+    """Development-only: return session internals. Not called by the live UI.
+    Note it is reachable by any logged-in user who knows a session_token."""
     session_token = request.args.get('session_token')
     if not session_token:
         return jsonify({'success': False, 'error': 'session_token required'}), 400
@@ -1339,7 +1416,10 @@ def debug_session():
 @app.route('/process_audio', methods=['POST'])
 @login_required  # PROTECTED
 def process_audio():
-    """Compatibility route for older speech_chat.html template"""
+    """DEPRECATED: upstream voice flow for speech_chat.html (not rendered).
+
+    Creates sessions without an assignment (no country/topic/CSV key) and
+    needs PyAudio + TTS credentials. Do not use for the study."""
     session_token = request.form.get('session_token')
     audio_file = request.files.get('audio')
 
@@ -1413,7 +1493,7 @@ def process_audio():
 @app.route('/get_last_messages', methods=['GET'])
 @login_required  # PROTECTED
 def get_last_messages():
-    """Get last messages for session"""
+    """DEPRECATED: companion to /process_audio."""
     session_token = request.args.get('session_token')
     if not session_token:
         return jsonify({'success': False, 'error': 'session_token required'}), 400
@@ -1431,6 +1511,7 @@ def get_last_messages():
 
 @app.route('/health', methods=['GET'])
 def health():
+    """Unauthenticated liveness probe: active session count, mean age, uptime."""
     current_time = time.time()
     session_ages = [
         (current_time - w.created_at) / 60
@@ -1445,7 +1526,10 @@ def health():
     })
 
 def wait_for_agent_response(session, timeout: float = 60.0, poll_interval: float = 0.5):
-    """Wait for the Interviewer/Agent to produce an output"""
+    """DEPRECATED: blocking wait used only by /process_audio.
+
+    Never call this from the text flow -- it drains the message buffer that
+    /api/get-messages polls (see send_message)."""
     start_time = None
     try:
         loop = asyncio.get_event_loop()
@@ -1492,6 +1576,13 @@ def _shutdown_wrapper_loop(wrapper):
 # cleanup_old_sessions() — evict on inactivity, and evict promptly
 # once the in-process loop has already died
 def cleanup_old_sessions():
+    """Evict live sessions from memory (runs every 5 min on a daemon thread).
+
+    Evicts when: the session's loop stopped and it has been idle > 2 min;
+    idle > SESSION_TIMEOUT_SECONDS; or finished (farewell) > 10 min ago.
+    Eviction never deletes data -- the next /api/start-session rebuilds the
+    session from its ratings CSV.
+    """
     current_time = time.time()
     to_remove = []
 
@@ -1569,6 +1660,8 @@ def parse_arguments():
 if __name__ == '__main__':
     args = parse_arguments()
 
+    # Legacy (pre-country layout): these paths miss data/<country>/<user_id>.
+    # Use scripts/delete_users.py to remove a user's data instead.
     if args.restart and args.user_id:
         os.system(f"rm -rf {os.getenv('LOGS_DIR')}/{args.user_id}")
         os.system(f"rm -rf {os.getenv('DATA_DIR')}/{args.user_id}")
@@ -1597,6 +1690,8 @@ if __name__ == '__main__':
     print(f"📊 Health check: http://{config.host}:{config.port}/health")
     print("="*70 + "\n")
     
+    # NOTE: if you switch to gunicorn, keep ONE worker (-w 1) -- active_sessions
+    # is per-process. The module path is src.main_flask:app (the hint below is stale).
     if not config.debug:
         print("⚠️  For production, use: gunicorn -w 2 --threads 4 -b 0.0.0.0:8080 flask_app:app\n")
     

@@ -1,3 +1,9 @@
+"""
+DORMANT in the web study -- upstream interview agenda.
+
+InterviewSession only calls get_last_session_agenda() to derive session_id;
+the agenda is never saved in web mode, so session_id is always 1.
+"""
 from typing import Optional, List, Dict, Tuple, Any
 from dataclasses import dataclass
 from pydantic import BaseModel

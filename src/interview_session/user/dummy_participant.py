@@ -1,3 +1,10 @@
+"""
+UserDummyParticipant: the web participant (interaction_mode='api').
+
+Interviewer messages are appended to `_message_buffer`; the browser reads them
+via /api/get-messages and removes rated ones via /api/acknowledge-messages.
+User input arrives from /api/send-message through add_user_message().
+"""
 import os
 import threading
 import time
@@ -14,6 +21,7 @@ if TYPE_CHECKING:
     from src.interview_session.interview_session import InterviewSession
 
 class UserDummyParticipant(User):
+    """Buffers interviewer candidates for HTTP polling. Guard the buffer with `_lock`."""
     def __init__(self, user_id: str, interview_session: 'InterviewSession'):
         super().__init__(user_id=user_id, interview_session=interview_session)
         self._message_buffer: List[Dict[str, Any]] = []
@@ -32,6 +40,8 @@ class UserDummyParticipant(User):
                 })
 
     def get_and_clear_messages(self):
+        """Drain the buffer. Only used by the deprecated voice flow -- the text
+        flow must NOT drain it (get_messages reads without clearing)."""
         with self._lock:
             if not self._message_buffer:
                 return []
@@ -57,6 +67,7 @@ class UserDummyParticipant(User):
                      rating_contextual: int = None,
                      rejected_options: list = None,
                      topic: str = None, country: str = None):
+        """Record a user turn (called on the session's loop via call_soon_threadsafe)."""
         self.interview_session.add_message_to_chat_history(
             role="User",
             content=text,
@@ -70,4 +81,5 @@ class UserDummyParticipant(User):
         )
 
     def get_interviewer_message(self):
+        """DEPRECATED: no callers."""
         pass

@@ -1,3 +1,8 @@
+"""
+Terminal participant (upstream). In the web study only its __init__ runs,
+as the base class of UserDummyParticipant; on_message()/get_voice_input()
+are terminal-mode only.
+"""
 import os
 from typing import TYPE_CHECKING
 from src.interview_session.session_models import Participant, Message

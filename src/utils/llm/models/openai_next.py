@@ -1,3 +1,9 @@
+"""
+Engine for the openai-next proxy (model names prefixed `openai-next:`).
+
+SECURITY: OPENAI_NEXT_API_KEY below is an API key committed to the repo.
+Treat it as exposed: rotate it and supply it via .env instead.
+"""
 import os
 from langchain_openai import ChatOpenAI
 from src.utils.llm.models.data import ModelResponse

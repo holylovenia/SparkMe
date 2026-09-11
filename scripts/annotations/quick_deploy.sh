@@ -1,4 +1,5 @@
 #!/bin/bash
+# UPSTREAM / NOT USED BY THE ARABIC STUDY. See scripts/README.md.
 
 # =============================================================================
 # Quick Deploy Script for Annotation App to GCP Cloud Run

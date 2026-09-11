@@ -1,3 +1,5 @@
+# UPSTREAM / NOT USED BY THE ARABIC STUDY. Stale: python:3.10 cannot install the
+# current requirements.txt (pandas 3 / numpy 2.4 need Python 3.11+).
 FROM python:3.10-slim
 
 # Set working directory

@@ -1,4 +1,19 @@
 
+"""
+LLM engine factory. get_engine() picks an engine class from the model name:
+
+    openrouter:<vendor/model>   OpenRouterEngine (quantization-aware routing)
+    fanar:<model>               FanarEngine           (FANAR_API_KEY)
+    jais:<...> / Jais-2-70B-Chat JaisEngine
+    gemini-api:<model>          GeminiAPIEngine       (GEMINI_API_KEY)
+    openai-next:<...>           OpenAINextEngine
+    vllm:<model>                VLLMEngine            (VLLM_BASE_URL)
+    lipsum:<name>               LipsumEngine -- placeholder for an empty slot
+    *claude* / *gemini* / *deepseek*   Vertex AI / DeepSeek engines
+    plain names in engine_constructor  LangChain ChatOpenAI / ChatTogether
+
+All engines return a ModelResponse via invoke_engine().
+"""
 from langchain_together import ChatTogether
 from langchain_openai import ChatOpenAI
 from langchain_google_vertexai import VertexAI
