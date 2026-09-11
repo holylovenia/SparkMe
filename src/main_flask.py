@@ -263,7 +263,7 @@ def get_all_countries() -> list:
         "Lebanon","Malaysia","Mexico","Morocco","Netherlands","New Zealand",
         "Nigeria","Norway","Pakistan","Palestine","Peru","Philippines","Poland","Portugal",
         "Romania","Russia","Saudi Arabia","Serbia","Singapore","South Africa",
-        "South Korea","Spain","Sri Lanka","Sweden","Switzerland","Syria",
+        "South Korea","Spain","Sri Lanka","Sudan","Sweden","Switzerland","Syria",
         "Taiwan","Thailand","Tunisia","Turkey","UAE","Ukraine","United Kingdom",
         "United States","Venezuela","Vietnam","Yemen"
     ]
